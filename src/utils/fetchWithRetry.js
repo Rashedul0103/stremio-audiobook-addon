@@ -1,8 +1,14 @@
 import pRetry from 'p-retry';
 import fetch from 'node-fetch';
+import http from 'http';
+import https from 'https';
+
+const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 50 });
+const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 50 });
 
 export async function fetchWithRetry(url, options = {}) {
     const timeout = options.timeout || 5000;
+    const isHttps = url.startsWith('https:');
     
     const headers = {
         'User-Agent': 'AudiobookStremioAddon/1.0.0 (https://github.com/stremio-audiobooks)',
@@ -20,10 +26,11 @@ export async function fetchWithRetry(url, options = {}) {
                     const response = await fetch(url, { 
                         ...options, 
                         headers, 
+                        agent: isHttps ? httpsAgent : httpAgent,
                         signal: controller.signal 
                     });
                     clearTimeout(timer);
-                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    if (!response.ok) throw new Error('HTTP ' + response.status);
                     return response;
                 } catch (err) {
                     clearTimeout(timer);
@@ -40,7 +47,7 @@ export async function fetchWithRetry(url, options = {}) {
             return text;
         }
     } catch (error) {
-        console.warn(`[Fetch Fail] ${url}: ${error.message}`);
+        console.warn('[Fetch Fail] ' + url + ': ' + error.message);
         return null;
     }
 }
