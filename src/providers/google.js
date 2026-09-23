@@ -3,35 +3,50 @@ import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, metaCache } from '../services/cache.js';
 
 export class GoogleBooksProvider extends BaseProvider {
-    constructor() { super('Google Books'); }
+    constructor() {
+        super('Google Books');
+        this.baseUrl = 'https://www.googleapis.com/books/v1/volumes';
+        this.apiKey = '';
+    }
 
-    async search(query, skip = 0) {
-        const cacheKey = `gb_search_${query}_${skip}`;
+    setApiKey(key) {
+        this.apiKey = key ? String(key).trim() : '';
+    }
+
+    async _fetch(url) {
+        const cacheKey = 'gb:' + url + (this.apiKey ? ':custom_key' : '');
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
-        const url = `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=40&startIndex=${skip}`;
-        const data = await fetchWithRetry(url);
+        const separator = url.includes('?') ? '&' : '?';
+        const finalUrl = this.apiKey ? (url + separator + 'key=' + this.apiKey) : url;
+
+        const data = await fetchWithRetry(finalUrl);
+        if (data) catalogCache.set(cacheKey, data);
+        return data;
+    }
+
+    async search(query, skip = 0) {
+        const url = this.baseUrl + '?q=' + encodeURIComponent(query) + '&maxResults=40&startIndex=' + skip;
+        const data = await this._fetch(url);
         if (!data || !data.items) return [];
 
-        const results = data.items.map(this._mapItem.bind(this)).filter(Boolean);
-        catalogCache.set(cacheKey, results);
-        return results;
+        return data.items.map(this._mapItem.bind(this)).filter(Boolean);
     }
 
     async getMeta(id) {
         let url = null;
         if (id.startsWith('isbn:')) {
-            url = `https://www.googleapis.com/books/v1/volumes?q=isbn:${id.substring(5)}`;
+            url = this.baseUrl + '?q=isbn:' + id.substring(5);
         } else if (id.startsWith('gb:')) {
-            url = `https://www.googleapis.com/books/v1/volumes/${id.substring(3)}`;
+            url = this.baseUrl + '/' + id.substring(3);
         } else {
             return null;
         }
 
-        const cacheKey = `gb_meta_${id}`;
+        const cacheKey = 'gb_meta_' + id + (this.apiKey ? ':custom' : '');
         if (metaCache.has(cacheKey)) return metaCache.get(cacheKey);
 
-        const data = await fetchWithRetry(url);
+        const data = await this._fetch(url);
         if (!data) return null;
 
         const item = data.items ? data.items[0] : data;
@@ -41,7 +56,7 @@ export class GoogleBooksProvider extends BaseProvider {
     }
 
     async getByNarrator() { return []; }
-    async getByGenre(genre, skip = 0) { return this.search(`subject:${genre}`, skip); }
+    async getByGenre(genre, skip = 0) { return this.search('subject:' + genre, skip); }
     async getSeries() { return []; }
     async getStreams() { return []; }
 
@@ -53,14 +68,14 @@ export class GoogleBooksProvider extends BaseProvider {
         
         let ratings = null;
         if (info.averageRating) {
-            ratings = { stars: Math.round(info.averageRating * 2), id: `gb:${item.id}` };
+            ratings = { stars: Math.round(info.averageRating * 2), id: 'gb:' + item.id };
         }
 
         const isbnObj = info.industryIdentifiers 
             ? info.industryIdentifiers.find(i => i.type === 'ISBN_13') || info.industryIdentifiers[0] 
             : null;
 
-        const canonicalId = isbnObj ? `isbn:${isbnObj.identifier}` : `gb:${item.id}`;
+        const canonicalId = isbnObj ? ('isbn:' + isbnObj.identifier) : ('gb:' + item.id);
 
         return {
             provider: 'google',
@@ -74,8 +89,7 @@ export class GoogleBooksProvider extends BaseProvider {
             genres: info.categories || [],
             year: info.publishedDate ? new Date(info.publishedDate).getFullYear() : null,
             ratings: ratings,
-            series: null,
-            externalIds: {}
+            series: null
         };
     }
 }

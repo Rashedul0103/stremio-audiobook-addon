@@ -5,9 +5,16 @@ import { aggregator } from '../services/aggregator.js';
 
 const builder = new addonBuilder(manifest);
 
+function applyApiKey(config) {
+    if (config?.google_books_api_key && aggregator.providers.google?.setApiKey) {
+        aggregator.providers.google.setApiKey(config.google_books_api_key);
+    }
+}
+
 // --- CATALOG HANDLER ---
 builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
     try {
+        applyApiKey(config);
         const skip = parseInt(extra?.skip || 0, 10);
         const catKey = 'cat_' + id;
         
@@ -17,16 +24,12 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
 
         let results = [];
 
-        // 1. Dynamic Pinned Rows (Clean name search without invalid prefixes)
-        if (id === 'pinned_author') {
-            const author = config.pinned_author || 'Stephen King';
-            results = await aggregator.searchAndSynthesize(author, skip);
+        if (id === 'pinned_author' && config.pinned_author) {
+            results = await aggregator.searchAndSynthesize(config.pinned_author, skip);
         }
-        else if (id === 'pinned_narrator') {
-            const narrator = config.pinned_narrator || 'Scott Brick';
-            results = await aggregator.searchAndSynthesize(narrator, skip);
+        else if (id === 'pinned_narrator' && config.pinned_narrator) {
+            results = await aggregator.searchAndSynthesize(config.pinned_narrator, skip);
         }
-        // 2. Base Catalogues
         else if (extra?.search) {
             results = await aggregator.searchAndSynthesize(extra.search, skip);
         } 
@@ -35,8 +38,16 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
             results = await aggregator.searchAndSynthesize('subject:' + selectedGenre, skip);
         }
         else if (id === 'free_public_domain') {
-            const searchResults = await aggregator.searchAndSynthesize('classic public domain audiobook', skip);
-            results = searchResults.filter(r => r.isPublicDomain || r.id?.startsWith('librivox:') || r.id?.startsWith('ia:'));
+            const [lvRes, iaRes] = await Promise.allSettled([
+                aggregator.providers.librivox.search('classic', skip),
+                aggregator.providers.internetarchive.search('audiobook classic', skip)
+            ]);
+            const rawResults = [
+                ...(lvRes.status === 'fulfilled' ? lvRes.value : []),
+                ...(iaRes.status === 'fulfilled' ? iaRes.value : [])
+            ];
+            const clusters = aggregator._clusterItems(rawResults);
+            results = clusters.map(c => aggregator._mergeGroup(c)).filter(r => r && (r.isPublicDomain || r.id?.startsWith('librivox:') || r.id?.startsWith('ia:')));
         }
         else if (id === 'novels') {
             results = await aggregator.searchAndSynthesize('novel fiction audiobook', skip);
@@ -71,12 +82,8 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
             results = await aggregator.searchAndSynthesize('audiobook', skip);
         }
 
-        if (config.hide_abridged) {
-            results = results.filter(r => r.abridged !== true);
-        }
-        if (config.public_domain_only) {
-            results = results.filter(r => r.isPublicDomain === true || r.id?.startsWith('librivox:') || r.id?.startsWith('ia:'));
-        }
+        if (config.hide_abridged) results = results.filter(r => r.abridged !== true);
+        if (config.public_domain_only) results = results.filter(r => r.isPublicDomain === true || r.id?.startsWith('librivox:') || r.id?.startsWith('ia:'));
         if (config.hide_explicit) {
             results = results.filter(r => {
                 const desc = (r.description || '').toLowerCase();
@@ -88,11 +95,8 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
         const metas = results.map(item => {
             const isFree = item.isPublicDomain || item.id?.startsWith('librivox:') || item.id?.startsWith('ia:');
             const freeBadge = isFree ? '🟢 Free Public Domain' : '';
-            const narratorDisplay = item.narrators?.length && item.narrators[0] !== 'Unknown' 
-                ? ('🎙️ ' + item.narrators.join(', ')) 
-                : '';
+            const narratorDisplay = item.narrators?.length && item.narrators[0] !== 'Unknown' ? ('🎙️ ' + item.narrators.join(', ')) : '';
             const authorDisplay = item.authors?.length ? ('✍️ ' + item.authors.join(', ')) : '';
-            
             const subtitle = [freeBadge, narratorDisplay, authorDisplay].filter(Boolean).join(' • ');
 
             return {
@@ -116,31 +120,24 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
     }
 });
 
-// --- META HANDLER (Interactive Deep-Linking) ---
+// --- META HANDLER ---
 builder.defineMetaHandler(async ({ type, id, config = {} }) => {
     try {
+        applyApiKey(config);
         const meta = await aggregator.getMetaAndSynthesize(id);
         if (!meta) return { meta: null };
-
         if (config.hide_abridged && meta.abridged === true) return { meta: null };
         if (config.public_domain_only && !meta.isPublicDomain && !id.startsWith('librivox:') && !id.startsWith('ia:')) return { meta: null };
 
         let formattedDesc = '';
-        if (meta.narrators?.length && meta.narrators[0] !== 'Unknown') {
-            formattedDesc += '🎙️ Narrated by: ' + meta.narrators.join(', ') + '\n';
-        }
-        if (meta.authors?.length) {
-            formattedDesc += '✍️ Author: ' + meta.authors.join(', ') + '\n';
-        }
-        if (meta.series?.name) {
-            formattedDesc += '📚 Series: ' + meta.series.name + (meta.series.index ? (' #' + meta.series.index) : '') + '\n';
-        }
+        if (meta.narrators?.length && meta.narrators[0] !== 'Unknown') formattedDesc += '🎙️ Narrated by: ' + meta.narrators.join(', ') + '\n';
+        if (meta.authors?.length) formattedDesc += '✍️ Author: ' + meta.authors.join(', ') + '\n';
+        if (meta.series?.name) formattedDesc += '📚 Series: ' + meta.series.name + (meta.series.index ? (' #' + meta.series.index) : '') + '\n';
 
         const availableStreams = await aggregator.getStreams(id);
         if (availableStreams && availableStreams.length > 0) {
             formattedDesc += '\n🎧 **Free Public Domain Audio Available** (' + availableStreams.length + ' tracks • LibriVox / Internet Archive)\n';
         }
-
         if (formattedDesc) formattedDesc += '\n';
         formattedDesc += meta.description || 'No description available.';
 
@@ -158,7 +155,6 @@ builder.defineMetaHandler(async ({ type, id, config = {} }) => {
             links: []
         };
 
-        // Interactive Deep-Links
         if (meta.series?.name) {
             stremioMeta.links.push({
                 name: meta.series.name,
@@ -195,6 +191,7 @@ builder.defineMetaHandler(async ({ type, id, config = {} }) => {
 // --- STREAM HANDLER ---
 builder.defineStreamHandler(async ({ type, id, config = {} }) => {
     try {
+        applyApiKey(config);
         let streams = await aggregator.getStreams(id);
         const playbackStyle = config.playback_style || 'both';
 

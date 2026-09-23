@@ -5,7 +5,7 @@ const defaultExtra = [
 
 export const manifest = {
     id: 'community.audiobook.cinemeta',
-    version: '1.3.0',
+    version: '1.4.0',
     name: 'Cinemeta of Audiobooks',
     description: 'Comprehensive audiobook discovery, cinema-grade metadata, and source-aggregation engine.',
     logo: 'https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Audiobook_icon.svg/1200px-Audiobook_icon.svg.png',
@@ -39,6 +39,25 @@ export const manifest = {
             ] 
         },
         { type: 'movie', id: 'search', name: 'Search', extra: [{ name: 'search', isRequired: true }, { name: 'skip', isRequired: false }] }
+    ],
+    configuration: [
+        { key: 'cat_free_public_domain', type: 'checkbox', title: 'Enable Free Public Domain Row', default: true },
+        { key: 'cat_bestsellers', type: 'checkbox', title: 'Enable Bestsellers', default: true },
+        { key: 'cat_novels', type: 'checkbox', title: 'Enable Novels & Fiction', default: true },
+        { key: 'cat_short_stories', type: 'checkbox', title: 'Enable Short Stories', default: true },
+        { key: 'cat_drama', type: 'checkbox', title: 'Enable Drama & Plays', default: true },
+        { key: 'cat_full_cast', type: 'checkbox', title: 'Enable Full Cast', default: true },
+        { key: 'cat_new_releases', type: 'checkbox', title: 'Enable New Releases', default: true },
+        { key: 'cat_trending', type: 'checkbox', title: 'Enable Popular & Trending', default: true },
+        { key: 'cat_top_rated', type: 'checkbox', title: 'Enable Top Rated', default: true },
+        { key: 'cat_award_winners', type: 'checkbox', title: 'Enable Award Winners', default: true },
+        { key: 'cat_series', type: 'checkbox', title: 'Enable Book Series', default: true },
+        { key: 'cat_by_narrator', type: 'checkbox', title: 'Enable By Narrator', default: true },
+        { key: 'cat_genre', type: 'checkbox', title: 'Enable Genres', default: true },
+        { key: 'cat_search', type: 'checkbox', title: 'Enable Search', default: true },
+        { key: 'hide_abridged', type: 'checkbox', title: 'Hide Abridged Versions', default: false },
+        { key: 'public_domain_only', type: 'checkbox', title: 'Public Domain Only Mode', default: false },
+        { key: 'google_books_api_key', type: 'text', title: 'Google Books API Key', default: '' }
     ],
     behaviorHints: {
         configurable: true,
