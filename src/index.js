@@ -27,7 +27,7 @@ app.get(['/', '/configure', '/:config/configure'], (req, res) => {
 // 3. Dynamic Manifest: Filter Disabled Rows AND Inject Pinned Rows
 app.get('/:config/manifest.json', (req, res, next) => {
     try {
-        const config = JSON.parse(decodeURIComponent(req.params.config));
+        const config = JSON.parse(req.params.config);
         
         let dynamicCatalogs = manifest.catalogs.filter(c => {
             const key = 'cat_' + c.id;
