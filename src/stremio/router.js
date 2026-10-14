@@ -40,7 +40,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
                 ...(iaRes.status === 'fulfilled' ? iaRes.value : [])
             ];
             const clusters = aggregator._clusterItems(rawResults);
-            results = clusters.map(c => aggregator._mergeGroup(c)).filter(r => r && (r.isPublicDomain || r.id?.startsWith('librivox:') || r.id?.startsWith('ia:')));
+            results = clusters.map(c => aggregator._mergeGroup(c)).filter(r => r && r.isPublicDomain === true);
         }
         else if (id === 'novels') {
             results = await aggregator.searchAndSynthesize('novel fiction audiobook', skip, config.google_books_api_key);
@@ -76,7 +76,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
         }
 
         if (config.hide_abridged) results = results.filter(r => r.abridged !== true);
-        if (config.public_domain_only) results = results.filter(r => r.isPublicDomain === true || r.id?.startsWith('librivox:') || r.id?.startsWith('ia:'));
+        if (config.public_domain_only) results = results.filter(r => r.isPublicDomain === true);
         if (config.hide_explicit) {
             results = results.filter(r => {
                 const desc = (r.description || '').toLowerCase();
@@ -86,7 +86,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
         }
 
         const metas = results.map(item => {
-            const isFree = item.isPublicDomain || item.id?.startsWith('librivox:') || item.id?.startsWith('ia:');
+            const isFree = item.isPublicDomain === true;
             const freeBadge = isFree ? '🟢 Free Public Domain' : '';
             const narratorDisplay = item.narrators?.length && item.narrators[0] !== 'Unknown' ? ('🎙️ ' + item.narrators.join(', ')) : '';
             const authorDisplay = item.authors?.length ? ('✍️ ' + item.authors.join(', ')) : '';
@@ -119,7 +119,7 @@ builder.defineMetaHandler(async ({ type, id, config = {} }) => {
         const meta = await aggregator.getMetaAndSynthesize(id, config.google_books_api_key);
         if (!meta) return { meta: null };
         if (config.hide_abridged && meta.abridged === true) return { meta: null };
-        if (config.public_domain_only && !meta.isPublicDomain && !id.startsWith('librivox:') && !id.startsWith('ia:')) return { meta: null };
+        if (config.public_domain_only && meta.isPublicDomain !== true) return { meta: null };
 
         let formattedDesc = '';
         if (meta.narrators?.length && meta.narrators[0] !== 'Unknown') formattedDesc += '🎙️ Narrated by: ' + meta.narrators.join(', ') + '\n';
@@ -128,7 +128,8 @@ builder.defineMetaHandler(async ({ type, id, config = {} }) => {
 
         const availableStreams = await aggregator.getStreams(id, config.google_books_api_key);
         if (availableStreams && availableStreams.length > 0) {
-            formattedDesc += '\n🎧 **Free Public Domain Audio Available** (' + availableStreams.length + ' tracks • LibriVox / Internet Archive)\n';
+            const rightsLabel = meta.isPublicDomain === true ? 'Free Public Domain Audio Available' : 'Audio Available (Rights Not Verified)';
+            formattedDesc += '\n🎧 ' + rightsLabel + ' (' + availableStreams.length + ' tracks • LibriVox / Internet Archive)\n';
         }
         if (formattedDesc) formattedDesc += '\n';
         formattedDesc += meta.description || 'No description available.';
