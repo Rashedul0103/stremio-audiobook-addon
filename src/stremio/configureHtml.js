@@ -8,7 +8,24 @@ export function getConfigureHtml(manifest, currentHost, currentConfigEncoded) {
             '</label>'
         ].join('\n')).join('\n');
 
-    const configJson = currentConfigEncoded ? decodeURIComponent(currentConfigEncoded) : '{}';
+    let configJson = '{}';
+    if (currentConfigEncoded) {
+        try {
+            const parsedConfig = JSON.parse(currentConfigEncoded);
+            if (parsedConfig && typeof parsedConfig === 'object' && !Array.isArray(parsedConfig)) {
+                configJson = JSON.stringify(parsedConfig);
+            }
+        } catch {
+            // Malformed configuration falls back to safe defaults.
+        }
+    }
+    const serializedConfigJson = JSON.stringify(configJson).replace(/[<>&\u2028\u2029]/g, char => ({
+        '<': '\\u003c',
+        '>': '\\u003e',
+        '&': '\\u0026',
+        '\u2028': '\\u2028',
+        '\u2029': '\\u2029'
+    })[char]);
 
     return [
         '<!DOCTYPE html>',
@@ -100,8 +117,8 @@ export function getConfigureHtml(manifest, currentHost, currentConfigEncoded) {
         '                        Google Books API Key (Optional)',
         '                        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" class="text-amber-400 hover:text-amber-300 text-xs ml-2 underline">Get Key ↗</a>',
         '                    </label>',
-        '                    <input type="text" id="google_books_api_key" placeholder="AIzaSy..." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:ring-2 focus:ring-amber-500 outline-none config-input">',
-        '                    <p class="text-xs text-slate-500 mt-1">Providing your own key prevents rate limits and ensures higher search reliability.</p>',
+        '                    <input type="password" id="google_books_api_key" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="AIzaSy..." class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3.5 py-2.5 text-sm text-white focus:ring-2 focus:ring-amber-500 outline-none config-input">',
+        '                    <p class="text-xs text-slate-500 mt-1">Treat the configured add-on URL as a secret: it contains this key. A key may reduce shared quota pressure but does not guarantee unlimited requests.</p>',
         '                </div>',
         '            </div>',
         '        </div>',
@@ -119,7 +136,7 @@ export function getConfigureHtml(manifest, currentHost, currentConfigEncoded) {
         '    </div>',
 
         '    <script>',
-        '        const existingConfig = ' + JSON.stringify(configJson) + ';',
+        '        const existingConfig = ' + serializedConfigJson + ';',
         '        window.addEventListener("DOMContentLoaded", () => {',
         '            try {',
         '                const config = JSON.parse(existingConfig);',
@@ -161,13 +178,13 @@ export function getConfigureHtml(manifest, currentHost, currentConfigEncoded) {
         '        function copyUrl() {',
         '            const url = getUrl();',
         '            navigator.clipboard.writeText(url).then(() => {',
-        '                alert("✅ Configured URL copied!\\n\\nPaste this into Nuvio or Stremio:\\n" + url);',
+        '                alert("✅ Configured URL copied. Treat it as a secret because it may contain your Google Books API key.");',
         '            });',
         '        }',
         '        function installAddon(client) {',
         '            const url = getUrl();',
         '            if (client === "stremio") {',
-        '                window.location.href = url.replace(/^http/, "stremio");',
+        '                window.location.href = url.replace(/^https?:\/\//i, "stremio://");',
         '            } else if (client === "nuvio") {',
         '                navigator.clipboard.writeText(url).then(() => {',
         '                    alert("✅ Nuvio URL copied!\\n\\nOpen Nuvio -> Add-ons -> Paste URL to install.");',
