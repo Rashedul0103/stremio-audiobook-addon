@@ -23,8 +23,8 @@ test('configurator safely embeds hostile input and uses the correct Stremio URI'
     const attack = JSON.stringify({ pinned_author: '</script><script>alert(1)</script>' });
     const html = getConfigureHtml(manifest, 'localhost:7000', attack);
     assert.equal(html.includes('</script><script>alert(1)</script>'), false);
-    assert.equal(html.includes(String.raw`\\u003c/script\\u003e`), true);
-    assert.equal(html.includes(String.raw`url.replace(/^https?:\\/\\//i, "stremio://")`), true);
+    assert.equal(html.includes(String.raw`\u003c/script\u003e`), true);
+    assert.equal(html.includes(String.raw`url.replace(/^https?:\/\//i, "stremio://")`), true);
 });
 
 test('malformed configurator input falls back instead of being injected', () => {
