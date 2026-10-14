@@ -5,16 +5,9 @@ import { aggregator } from '../services/aggregator.js';
 
 const builder = new addonBuilder(manifest);
 
-function applyApiKey(config) {
-    if (config?.google_books_api_key && aggregator.providers.google?.setApiKey) {
-        aggregator.providers.google.setApiKey(config.google_books_api_key);
-    }
-}
-
 // --- CATALOG HANDLER ---
 builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
     try {
-        applyApiKey(config);
         const skip = parseInt(extra?.skip || 0, 10);
         const catKey = 'cat_' + id;
         
@@ -25,17 +18,17 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
         let results = [];
 
         if (id === 'pinned_author' && config.pinned_author) {
-            results = await aggregator.searchAndSynthesize(config.pinned_author, skip);
+            results = await aggregator.searchAndSynthesize(config.pinned_author, skip, config.google_books_api_key);
         }
         else if (id === 'pinned_narrator' && config.pinned_narrator) {
-            results = await aggregator.searchAndSynthesize(config.pinned_narrator, skip);
+            results = await aggregator.searchAndSynthesize(config.pinned_narrator, skip, config.google_books_api_key);
         }
         else if (extra?.search) {
-            results = await aggregator.searchAndSynthesize(extra.search, skip);
+            results = await aggregator.searchAndSynthesize(extra.search, skip, config.google_books_api_key);
         } 
         else if (id === 'genre') {
             const selectedGenre = extra?.genre || 'Science Fiction';
-            results = await aggregator.searchAndSynthesize('subject:' + selectedGenre, skip);
+            results = await aggregator.searchAndSynthesize('subject:' + selectedGenre, skip, config.google_books_api_key);
         }
         else if (id === 'free_public_domain') {
             const [lvRes, iaRes] = await Promise.allSettled([
@@ -50,36 +43,36 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
             results = clusters.map(c => aggregator._mergeGroup(c)).filter(r => r && (r.isPublicDomain || r.id?.startsWith('librivox:') || r.id?.startsWith('ia:')));
         }
         else if (id === 'novels') {
-            results = await aggregator.searchAndSynthesize('novel fiction audiobook', skip);
+            results = await aggregator.searchAndSynthesize('novel fiction audiobook', skip, config.google_books_api_key);
         }
         else if (id === 'short_stories') {
-            results = await aggregator.searchAndSynthesize('short stories collection audiobook', skip);
+            results = await aggregator.searchAndSynthesize('short stories collection audiobook', skip, config.google_books_api_key);
         }
         else if (id === 'drama') {
-            results = await aggregator.searchAndSynthesize('drama radio play audiobook', skip);
+            results = await aggregator.searchAndSynthesize('drama radio play audiobook', skip, config.google_books_api_key);
         }
         else if (id === 'full_cast') {
-            results = await aggregator.searchAndSynthesize('full cast dramatization audiobook', skip);
+            results = await aggregator.searchAndSynthesize('full cast dramatization audiobook', skip, config.google_books_api_key);
         }
         else if (id === 'bestsellers' || id === 'trending') {
-            results = await aggregator.searchAndSynthesize('bestselling audiobooks', skip);
+            results = await aggregator.searchAndSynthesize('bestselling audiobooks', skip, config.google_books_api_key);
         }
         else if (id === 'new_releases') {
-            results = await aggregator.searchAndSynthesize('new release audiobooks', skip);
+            results = await aggregator.searchAndSynthesize('new release audiobooks', skip, config.google_books_api_key);
         }
         else if (id === 'top_rated') {
-            results = await aggregator.searchAndSynthesize('highly rated audiobooks', skip);
+            results = await aggregator.searchAndSynthesize('highly rated audiobooks', skip, config.google_books_api_key);
         }
         else if (id === 'award_winners') {
-            results = await aggregator.searchAndSynthesize('audie award winner audiobook', skip);
+            results = await aggregator.searchAndSynthesize('audie award winner audiobook', skip, config.google_books_api_key);
         }
         else if (id === 'series') {
-            results = await aggregator.searchAndSynthesize('popular book series', skip);
+            results = await aggregator.searchAndSynthesize('popular book series', skip, config.google_books_api_key);
         }
         else if (id === 'by_narrator') {
-            results = await aggregator.searchAndSynthesize('popular audiobook narrators', skip);
+            results = await aggregator.searchAndSynthesize('popular audiobook narrators', skip, config.google_books_api_key);
         } else {
-            results = await aggregator.searchAndSynthesize('audiobook', skip);
+            results = await aggregator.searchAndSynthesize('audiobook', skip, config.google_books_api_key);
         }
 
         if (config.hide_abridged) results = results.filter(r => r.abridged !== true);
@@ -123,8 +116,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
 // --- META HANDLER ---
 builder.defineMetaHandler(async ({ type, id, config = {} }) => {
     try {
-        applyApiKey(config);
-        const meta = await aggregator.getMetaAndSynthesize(id);
+        const meta = await aggregator.getMetaAndSynthesize(id, config.google_books_api_key);
         if (!meta) return { meta: null };
         if (config.hide_abridged && meta.abridged === true) return { meta: null };
         if (config.public_domain_only && !meta.isPublicDomain && !id.startsWith('librivox:') && !id.startsWith('ia:')) return { meta: null };
@@ -134,7 +126,7 @@ builder.defineMetaHandler(async ({ type, id, config = {} }) => {
         if (meta.authors?.length) formattedDesc += '✍️ Author: ' + meta.authors.join(', ') + '\n';
         if (meta.series?.name) formattedDesc += '📚 Series: ' + meta.series.name + (meta.series.index ? (' #' + meta.series.index) : '') + '\n';
 
-        const availableStreams = await aggregator.getStreams(id);
+        const availableStreams = await aggregator.getStreams(id, config.google_books_api_key);
         if (availableStreams && availableStreams.length > 0) {
             formattedDesc += '\n🎧 **Free Public Domain Audio Available** (' + availableStreams.length + ' tracks • LibriVox / Internet Archive)\n';
         }
@@ -191,8 +183,7 @@ builder.defineMetaHandler(async ({ type, id, config = {} }) => {
 // --- STREAM HANDLER ---
 builder.defineStreamHandler(async ({ type, id, config = {} }) => {
     try {
-        applyApiKey(config);
-        let streams = await aggregator.getStreams(id);
+        let streams = await aggregator.getStreams(id, config.google_books_api_key);
         const playbackStyle = config.playback_style || 'both';
 
         if (playbackStyle === 'single_file') {
