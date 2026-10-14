@@ -184,7 +184,7 @@ export function getConfigureHtml(manifest, currentHost, currentConfigEncoded) {
         '        function installAddon(client) {',
         '            const url = getUrl();',
         '            if (client === "stremio") {',
-        '                window.location.href = url.replace(/^https?:\/\//i, "stremio://");',
+        '                window.location.href = url.replace(/^https?:\\/\\//i, "stremio://");',
         '            } else if (client === "nuvio") {',
         '                navigator.clipboard.writeText(url).then(() => {',
         '                    alert("✅ Nuvio URL copied!\\n\\nOpen Nuvio -> Add-ons -> Paste URL to install.");',
