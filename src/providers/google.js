@@ -50,9 +50,9 @@ export class GoogleBooksProvider extends BaseProvider {
         return this.search(query, skip, apiKey, { orderBy: 'newest' });
     }
 
-    async searchByAuthor(author, skip = 0, apiKey = '') {
+    async searchByAuthor(author, skip = 0, apiKey = '', language = '') {
         const escaped = String(author).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        return this.search(`inauthor:"${escaped}"`, skip, apiKey);
+        return this.search(`inauthor:"${escaped}"`, skip, apiKey, { language });
     }
 
     async getMeta(id, apiKey = '') {
@@ -78,7 +78,7 @@ export class GoogleBooksProvider extends BaseProvider {
     }
 
     async getByNarrator() { return []; }
-    async getByGenre(genre, skip = 0, apiKey = '') { return this.search('subject:' + genre, skip, apiKey); }
+    async getByGenre(genre, skip = 0, apiKey = '', language = '') { return this.search('subject:' + genre, skip, apiKey, { language }); }
     async getSeries() { return []; }
     async getStreams() { return []; }
 
