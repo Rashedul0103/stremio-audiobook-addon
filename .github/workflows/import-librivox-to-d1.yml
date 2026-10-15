@@ -62,6 +62,23 @@ jobs:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
 
+      - name: Verify remote D1 matches the import snapshot
+        run: node scripts/verify-d1-import.mjs "$RUNNER_TEMP/librivox-d1-import/summary.json" "$RUNNER_TEMP/librivox-d1-import/remote-verification.json"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Upload import and remote verification reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: librivox-d1-import-verification
+          path: |
+            ${{ runner.temp }}/librivox-d1-import/summary.json
+            ${{ runner.temp }}/librivox-d1-import/remote-verification.json
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Print import summary
         if: always()
         run: |
