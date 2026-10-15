@@ -1,6 +1,8 @@
 import { BaseProvider } from './base.js';
 import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { metaCache } from '../services/cache.js';
+import { normalizeLanguage } from '../utils/language.js';
+import { extractAwards } from '../utils/genreMapper.js';
 
 export class AudnexusProvider extends BaseProvider {
     constructor() { super('Audnexus'); }
@@ -27,6 +29,8 @@ export class AudnexusProvider extends BaseProvider {
             poster: data.image || null,
             background: data.image || null,
             genres: [],
+            language: normalizeLanguage(data.language || data.audioLanguage),
+            awards: extractAwards([data.title, data.summary, ...(data.genres || [])]),
             year: data.releaseDate ? new Date(data.releaseDate).getFullYear() : null,
             abridged: data.abridged || false,
             series: data.seriesPrimary ? [{ name: data.seriesPrimary.name, index: data.seriesPrimary.position }] : [],
