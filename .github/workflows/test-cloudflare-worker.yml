@@ -30,4 +30,4 @@ jobs:
       - name: Check import builder syntax
         run: node --check scripts/build-librivox-d1-import.mjs
       - name: Run Worker tests
-        run: node --test worker/test/worker.test.js
+        run: node --test worker/test/*.test.js
