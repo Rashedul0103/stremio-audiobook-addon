@@ -19,5 +19,10 @@
     "node-fetch": "^3.3.2",
     "p-retry": "^6.2.1",
     "stremio-addon-sdk": "^1.6.10"
+  },
+  "overrides": {
+    "router": "2.2.0",
+    "inquirer": "8.2.7",
+    "tmp": "0.2.6"
   }
 }
