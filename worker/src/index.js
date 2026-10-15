@@ -28,7 +28,7 @@ function json(data, status = 200, extraHeaders = {}) {
     headers: {
       ...CORS_HEADERS,
       "Content-Type": "application/json; charset=utf-8",
-      "Cache-Control": "public, max-age=60",
+      "Cache-Control": status >= 400 ? "no-store" : "public, max-age=60",
       ...extraHeaders,
     },
   });
@@ -261,8 +261,7 @@ async function getStreams(db, route) {
   });
 }
 
-export default {
-  async fetch(request, env) {
+async function handleRequest(request, env) {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS_HEADERS });
     }
@@ -272,12 +271,12 @@ export default {
 
     const url = new URL(request.url);
     if (url.pathname === "/health") {
-      if (!env.DB) return json({ ok: false, database: "not_configured" }, 503);
+      if (!env.DB) return json({ ok: false, database: "not_configured" }, 503, { "Cache-Control": "no-store" });
       try {
         const row = await env.DB.prepare("SELECT COUNT(*) AS books FROM books").first();
-        return json({ ok: true, books: safeNumber(row?.books), service: "librivox-audiobook-addon" });
+        return json({ ok: true, books: safeNumber(row?.books), service: "librivox-audiobook-addon" }, 200, { "Cache-Control": "no-store" });
       } catch {
-        return json({ ok: false, database: "not_initialized" }, 503);
+        return json({ ok: false, database: "not_initialized" }, 503, { "Cache-Control": "no-store" });
       }
     }
     if (url.pathname === "/manifest.json") {
@@ -303,5 +302,22 @@ export default {
       console.error("Addon request failed", error);
       return json({ error: "Catalogue request failed. Check the Worker logs." }, 500);
     }
+}
+
+export default {
+  async fetch(request, env) {
+    if (request.method === "HEAD") {
+      const getRequest = new Request(request.url, {
+        method: "GET",
+        headers: request.headers,
+      });
+      const response = await handleRequest(getRequest, env);
+      return new Response(null, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
+    return handleRequest(request, env);
   },
 };
