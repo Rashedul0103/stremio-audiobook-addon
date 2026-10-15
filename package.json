@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "node --test",
-    "check": "node --check src/index.js && node --check src/stremio/configureHtml.js && node --check src/providers/google.js && node --check src/services/aggregator.js && node --check src/providers/streams.js && node --check src/stremio/router.js && node --check src/utils/fetchWithRetry.js && node --check test/phase1.test.js && node --check test/phase2.test.js",
+    "check": "node --check src/index.js && node --check src/stremio/configureHtml.js && node --check src/providers/google.js && node --check src/services/aggregator.js && node --check src/providers/streams.js && node --check src/stremio/router.js && node --check src/utils/fetchWithRetry.js && node --check src/utils/language.js && node --check test/phase1.test.js && node --check test/phase2.test.js && node --check test/phase3.test.js",
     "start": "node src/index.js"
   },
   "keywords": [],
