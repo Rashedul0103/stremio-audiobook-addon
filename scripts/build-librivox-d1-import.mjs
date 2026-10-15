@@ -215,13 +215,17 @@ fs.writeFileSync(path.join(outputDir, "00-clear.sql"), "DELETE FROM genres;\n", 
 
 function bookToSqlStatements(book) {
   const makeInsert = (chaptersJson) =>
-    "INSERT OR REPLACE INTO books (id,title,author,language,genres_json,description,poster,year,chapter_count,chapters_json,search_text) VALUES (" +
+    "INSERT INTO books (id,title,author,language,genres_json,description,poster,year,chapter_count,chapters_json,search_text) VALUES (" +
     [
       sqlText(book.id), sqlText(book.title), sqlText(book.author), sqlText(book.language),
       sqlText(book.genres_json), sqlText(book.description), sqlValue(book.poster),
       book.year === null ? "NULL" : String(book.year), String(book.chapter_count),
       sqlText(chaptersJson), sqlText(book.search_text),
-    ].join(",") + ");";
+    ].join(",") + ") ON CONFLICT(id) DO UPDATE SET " +
+    "title=excluded.title,author=excluded.author,language=excluded.language," +
+    "genres_json=excluded.genres_json,description=excluded.description,poster=excluded.poster," +
+    "year=excluded.year,chapter_count=excluded.chapter_count,chapters_json=excluded.chapters_json," +
+    "search_text=excluded.search_text;";
 
   const directInsert = makeInsert(book.chapters_json);
   if (Buffer.byteLength(directInsert, "utf8") < 90_000) return [directInsert];
