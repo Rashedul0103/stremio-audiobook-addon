@@ -23,6 +23,16 @@ export function normalizeLanguage(value) {
     return null;
 }
 
+const libraryLanguageCodes = new Map([
+    ['en', 'eng'], ['bn', 'ben'], ['hi', 'hin'], ['ur', 'urd'], ['ar', 'ara'],
+    ['tr', 'tur'], ['es', 'spa'], ['fr', 'fre'], ['de', 'ger']
+]);
+
+export function toLibraryLanguageCode(value) {
+    const language = normalizeLanguage(value);
+    return language ? libraryLanguageCodes.get(language) || null : null;
+}
+
 export function filterByLanguage(items, language) {
     if (!language || language === 'all') return items;
     const wanted = normalizeLanguage(language);
