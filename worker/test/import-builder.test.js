@@ -121,7 +121,7 @@ test("D1 import builder groups tracks by title and language, retaining genre and
   assert.equal(allBookSql.includes("DELETE FROM books"), false);
 
   const allGenreSql = fs.readdirSync(output).filter((name) => name.startsWith("20-genres-"))
-    .map((name) => fs.readFileSync(path.join(output, name), "utf8")).join("\\n");
+    .map((name) => fs.readFileSync(path.join(output, name), "utf8")).join("\n");
   assert.match(allGenreSql, /import_generation/);
 
   const migrations = path.join(projectRoot, "worker/migrations");
