@@ -26,7 +26,7 @@ export class GoogleBooksProvider extends BaseProvider {
         }
 
         const data = await fetchWithRetry(finalUrl);
-        if (data && !data.error) catalogCache.set(cacheKey, data);
+        if (data && !data.error) catalogCache.set(cacheKey, data, Array.isArray(data.items) && data.items.length === 0 ? 60 : 0);
         return data && !data.error ? data : null;
     }
 
@@ -36,7 +36,6 @@ export class GoogleBooksProvider extends BaseProvider {
         if (!data || !data.items) return [];
 
         const results = data.items.map(this._mapItem.bind(this)).filter(Boolean);
-        if (results.length === 0) catalogCache.set('gb_empty_' + url + ':' + getApiKeyCacheScope(apiKey), [], 60);
         return results;
     }
 
