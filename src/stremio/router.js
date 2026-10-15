@@ -12,15 +12,15 @@ function recordText(item) {
 }
 
 function hasBestsellerMention(item) {
-    return /\\b(best[ -]?seller|best selling)\\b/i.test(recordText(item));
+    return /\b(best[ -]?seller|best selling)\b/i.test(recordText(item));
 }
 
 function hasDramaEvidence(item) {
-    return /\\b(drama|radio play|audio drama|dramati[sz]ed)\\b/i.test(recordText(item));
+    return /\b(drama|radio play|audio drama|dramati[sz]ed)\b/i.test(recordText(item));
 }
 
 function hasFullCastEvidence(item) {
-    return /\\b(full[ -]?cast|full company|ensemble cast)\\b/i.test(recordText(item));
+    return /\b(full[ -]?cast|full company|ensemble cast)\b/i.test(recordText(item));
 }
 
 // --- CATALOG HANDLER ---
