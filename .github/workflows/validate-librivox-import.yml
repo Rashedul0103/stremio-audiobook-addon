@@ -7,6 +7,11 @@ on:
       - ".github/workflows/validate-librivox-import.yml"
       - "scripts/build-librivox-d1-import.mjs"
   workflow_dispatch:
+  pull_request:
+    paths:
+      - "scripts/build-librivox-d1-import.mjs"
+      - "worker/migrations/**"
+      - ".github/workflows/validate-librivox-import.yml"
 
 permissions:
   contents: read
@@ -69,19 +74,31 @@ jobs:
           if (!summary.books || !summary.chapters) {
             throw new Error("The full import produced no books or no audio chapters.");
           }
+          if (!/^[a-f0-9]{24}$/.test(summary.importGeneration || "")) {
+            throw new Error("The import builder did not provide a valid generation marker.");
+          }
+          if (!files.includes("99-prune-stale.sql")) {
+            throw new Error("The final stale-row cleanup batch is missing.");
+          }
           for (const language of ["English", "Bangla", "Hindi", "Urdu", "Arabic", "Turkish"]) {
             if (!summary.languages[language]) {
               throw new Error("No importable records were found for " + language);
             }
           }
+          // The SQL statement count above covers row inserts/updates. Reserve one
+          // additional catalogue-sized budget for rows that a previous import may
+          // have left stale and the final generation-prune may delete.
+          const staleRowDeleteBudget = summary.books + summary.genres;
+          estimatedRowWrites += staleRowDeleteBudget;
           if (estimatedRowWrites >= 100000) {
-            throw new Error("Estimated initial D1 row writes (" + estimatedRowWrites + ") meet or exceed the 100,000/day Free-plan allowance.");
+            throw new Error("Estimated D1 row writes with stale-row cleanup (" + estimatedRowWrites + ") meet or exceed the 100,000/day Free-plan allowance.");
           }
 
           const report = {
             ...summary,
             sqlBatchFiles: files.length,
             maxSqlBatchBytes: maxFileBytes,
+            staleRowDeleteBudget,
             estimatedRowWrites,
             cloudflareDeployed: false
           };

@@ -240,23 +240,36 @@ const normalizedBooks = [...books.values()].map((book) => {
 
 if (!normalizedBooks.length) throw new Error("No books were built; refusing to generate an empty import.");
 
+const uniqueGenres = new Map();
+for (const book of normalizedBooks) {
+  for (const genre of book.genres) uniqueGenres.set(genreSlug(genre), genre);
+}
+
+// A deterministic generation marker lets the final SQL batch remove stale rows
+// only after every upsert batch has succeeded. Retries of the same source snapshot
+// keep the same marker and remain safe/idempotent.
+const generationMaterial = [
+  ...normalizedBooks.map((book) => "book:" + book.id).sort(),
+  ...[...uniqueGenres.keys()].sort().map((slug) => "genre:" + slug),
+].join("\n");
+const importGeneration = createHash("sha256").update(generationMaterial).digest("hex").slice(0, 24);
+
 fs.rmSync(outputDir, { recursive: true, force: true });
 fs.mkdirSync(outputDir, { recursive: true });
-fs.writeFileSync(path.join(outputDir, "00-clear.sql"), "DELETE FROM genres;\n", "utf8");
 
 function bookToSqlStatements(book) {
   const makeInsert = (chaptersJson) =>
-    "INSERT INTO books (id,title,author,language,genres_json,description,poster,year,chapter_count,chapters_json,search_text) VALUES (" +
+    "INSERT INTO books (id,title,author,language,genres_json,description,poster,year,chapter_count,chapters_json,search_text,import_generation) VALUES (" +
     [
       sqlText(book.id), sqlText(book.title), sqlText(book.author), sqlText(book.language),
       sqlText(book.genres_json), sqlText(book.description), sqlValue(book.poster),
       book.year === null ? "NULL" : String(book.year), String(book.chapter_count),
-      sqlText(chaptersJson), sqlText(book.search_text),
+      sqlText(chaptersJson), sqlText(book.search_text), sqlText(importGeneration),
     ].join(",") + ") ON CONFLICT(id) DO UPDATE SET " +
     "title=excluded.title,author=excluded.author,language=excluded.language," +
     "genres_json=excluded.genres_json,description=excluded.description,poster=excluded.poster," +
     "year=excluded.year,chapter_count=excluded.chapter_count,chapters_json=excluded.chapters_json," +
-    "search_text=excluded.search_text;";
+    "search_text=excluded.search_text,import_generation=excluded.import_generation;";
 
   const directInsert = makeInsert(book.chapters_json);
   if (Buffer.byteLength(directInsert, "utf8") < 90_000) return [directInsert];
@@ -294,18 +307,25 @@ function bookToSqlStatements(book) {
 
 const bookSql = normalizedBooks.flatMap(bookToSqlStatements);
 
-const uniqueGenres = new Map();
-for (const book of normalizedBooks) {
-  for (const genre of book.genres) uniqueGenres.set(genreSlug(genre), genre);
-}
 const genreSql = [...uniqueGenres.entries()].sort((a, b) => a[1].localeCompare(b[1])).map(([slug, name]) =>
-  "INSERT OR REPLACE INTO genres (slug,name) VALUES (" + sqlText(slug) + "," + sqlText(name) + ");"
+  "INSERT OR REPLACE INTO genres (slug,name,import_generation) VALUES (" +
+  sqlText(slug) + "," + sqlText(name) + "," + sqlText(importGeneration) + ");"
 );
 
 const bookBatches = writeBatches("10-books-", bookSql);
 const genreBatches = writeBatches("20-genres-", genreSql, 150_000, 400);
 
+// This cleanup runs last because its filename sorts after every data batch.
+// If an earlier batch fails, the currently published catalogue is not pruned.
+fs.writeFileSync(
+  path.join(outputDir, "99-prune-stale.sql"),
+  "DELETE FROM books WHERE import_generation <> " + sqlText(importGeneration) + ";\n" +
+  "DELETE FROM genres WHERE import_generation <> " + sqlText(importGeneration) + ";\n",
+  "utf8",
+);
+
 const summary = {
+  importGeneration,
   books: normalizedBooks.length,
   chapters: normalizedBooks.reduce((sum, book) => sum + book.chapter_count, 0),
   genres: uniqueGenres.size,

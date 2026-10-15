@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const builderPath = path.join(projectRoot, "scripts/build-librivox-d1-import.mjs");
@@ -102,8 +103,13 @@ test("D1 import builder groups tracks by title and language, retaining genre and
   assert.equal(summary.languages.Bangla, 1);
   assert.equal(summary.languages.Turkish, 1);
   assert.ok(summary.bookSqlBatches >= 1);
-  assert.ok(fs.existsSync(path.join(output, "00-clear.sql")));
-  assert.equal(fs.readFileSync(path.join(output, "00-clear.sql"), "utf8").includes("DELETE FROM books"), false);
+  assert.match(summary.importGeneration, /^[a-f0-9]{24}$/);
+  const pruneSqlPath = path.join(output, "99-prune-stale.sql");
+  assert.ok(fs.existsSync(pruneSqlPath));
+  const pruneSql = fs.readFileSync(pruneSqlPath, "utf8");
+  assert.match(pruneSql, /DELETE FROM books WHERE import_generation <> '[a-f0-9]{24}'/);
+  assert.match(pruneSql, /DELETE FROM genres WHERE import_generation <> '[a-f0-9]{24}'/);
+  assert.equal(fs.existsSync(path.join(output, "00-clear.sql")), false);
 
   const allBookSql = fs.readdirSync(output).filter((name) => name.startsWith("10-books-"))
     .map((name) => fs.readFileSync(path.join(output, name), "utf8")).join("\n");
@@ -111,4 +117,38 @@ test("D1 import builder groups tracks by title and language, retaining genre and
   assert.match(allBookSql, /Jane Writer/);
   assert.match(allBookSql, /chapter_01\.mp3/);
   assert.match(allBookSql, /Multilingual Book/);
+  assert.match(allBookSql, /import_generation/);
+  assert.equal(allBookSql.includes("DELETE FROM books"), false);
+
+  const allGenreSql = fs.readdirSync(output).filter((name) => name.startsWith("20-genres-"))
+    .map((name) => fs.readFileSync(path.join(output, name), "utf8")).join("\n");
+  assert.match(allGenreSql, /import_generation/);
+
+  const migrations = path.join(projectRoot, "worker/migrations");
+  const db = new DatabaseSync(":memory:");
+  context.after(() => db.close());
+  for (const migration of fs.readdirSync(migrations).filter((name) => name.endsWith(".sql")).sort()) {
+    db.exec(fs.readFileSync(path.join(migrations, migration), "utf8"));
+  }
+  db.prepare(`
+    INSERT INTO books (
+      id, title, author, language, genres_json, description, year,
+      chapter_count, chapters_json, search_text, import_generation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run("obsolete-old-book", "Obsolete Book", "Old Author", "English", '["Removed Genre"]',
+    "Stale row fixture", null, 1, "[]", "obsolete old author", "old-generation");
+  db.prepare("INSERT INTO genres (slug, name, import_generation) VALUES (?, ?, ?)")
+    .run("removed-genre", "Removed Genre", "old-generation");
+
+  // Apply SQL files in the same lexical order used by the Cloudflare import workflow.
+  for (const name of fs.readdirSync(output).filter((file) => file.endsWith(".sql")).sort()) {
+    db.exec(fs.readFileSync(path.join(output, name), "utf8"));
+  }
+
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM books").get().count, summary.books);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM genres").get().count, summary.genres);
+  assert.equal(db.prepare("SELECT id FROM books WHERE id = ?").get("obsolete-old-book"), undefined);
+  assert.equal(db.prepare("SELECT slug FROM genres WHERE slug = ?").get("removed-genre"), undefined);
+  assert.equal(db.prepare("SELECT COUNT(*) AS count FROM books WHERE import_generation <> ?")
+    .get(summary.importGeneration).count, 0);
 });
