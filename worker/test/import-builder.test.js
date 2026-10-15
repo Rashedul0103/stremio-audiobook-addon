@@ -102,8 +102,13 @@ test("D1 import builder groups tracks by title and language, retaining genre and
   assert.equal(summary.languages.Bangla, 1);
   assert.equal(summary.languages.Turkish, 1);
   assert.ok(summary.bookSqlBatches >= 1);
-  assert.ok(fs.existsSync(path.join(output, "00-clear.sql")));
-  assert.equal(fs.readFileSync(path.join(output, "00-clear.sql"), "utf8").includes("DELETE FROM books"), false);
+  assert.match(summary.importGeneration, /^[a-f0-9]{24}$/);
+  const pruneSqlPath = path.join(output, "99-prune-stale.sql");
+  assert.ok(fs.existsSync(pruneSqlPath));
+  const pruneSql = fs.readFileSync(pruneSqlPath, "utf8");
+  assert.match(pruneSql, /DELETE FROM books WHERE import_generation <> '[a-f0-9]{24}'/);
+  assert.match(pruneSql, /DELETE FROM genres WHERE import_generation <> '[a-f0-9]{24}'/);
+  assert.equal(fs.existsSync(path.join(output, "00-clear.sql")), false);
 
   const allBookSql = fs.readdirSync(output).filter((name) => name.startsWith("10-books-"))
     .map((name) => fs.readFileSync(path.join(output, name), "utf8")).join("\n");
