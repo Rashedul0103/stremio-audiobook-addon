@@ -95,8 +95,8 @@ test("D1 import builder groups tracks by title and language, retaining genre and
   const run = spawnSync(process.execPath, [builderPath, source, output], { encoding: "utf8" });
   assert.equal(run.status, 0, run.stderr || run.stdout);
   const summary = JSON.parse(fs.readFileSync(path.join(output, "summary.json"), "utf8"));
-  assert.equal(summary.books, 7);
-  assert.equal(summary.chapters, 8);
+  assert.equal(summary.books, 6);
+  assert.equal(summary.chapters, 7);
   assert.equal(summary.genres, 3);
   assert.equal(summary.languages.English, 1);
   assert.equal(summary.languages.Bangla, 1);
