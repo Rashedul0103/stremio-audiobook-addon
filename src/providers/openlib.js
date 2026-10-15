@@ -1,6 +1,8 @@
 import { BaseProvider } from './base.js';
 import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, metaCache } from '../services/cache.js';
+import { normalizeLanguage } from '../utils/language.js';
+import { extractAwards } from '../utils/genreMapper.js';
 
 export class OpenLibraryProvider extends BaseProvider {
     constructor() { super('Open Library'); }
@@ -64,7 +66,9 @@ export class OpenLibraryProvider extends BaseProvider {
             description: null,
             poster: coverId,
             background: coverId,
-            genres: doc.subject ? doc.subject.slice(0, 5) : [],
+            genres: doc.subject ? doc.subject.slice(0, 10) : [],
+            language: normalizeLanguage(doc.language),
+            awards: extractAwards([...(doc.subject || []), doc.title]),
             year: doc.first_publish_year,
             series: doc.series ? doc.series.map(s => ({ name: s })) : [],
             externalIds: { olid: doc.key ? `olid:${doc.key.split('/').pop()}` : null }
@@ -83,6 +87,8 @@ export class OpenLibraryProvider extends BaseProvider {
             poster: coverId,
             background: coverId,
             genres: work.subjects ? work.subjects.slice(0, 10) : [],
+            language: normalizeLanguage(work.languages?.map(language => language.key || language)),
+            awards: extractAwards([...(work.subjects || []), work.title, work.description?.value || work.description]),
             year: null,
             series: work.series ? work.series.map(s => ({ name: s })) : [],
             externalIds: { olid: work.key ? `olid:${work.key.split('/').pop()}` : null }
