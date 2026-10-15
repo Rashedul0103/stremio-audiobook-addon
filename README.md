@@ -26,6 +26,10 @@ A comprehensive, cinema-grade audiobook discovery, metadata, and source-aggregat
 2. Run `npm start`
 3. Install in Stremio via: `stremio://localhost:7000/manifest.json`
 
+## Cloudflare Workers alternative
+
+A no-VPS, free-tier deployment for the LibriVox catalogue is being added separately from the existing Node.js addon. See [worker/README.md](worker/README.md) for setup, the D1 catalogue import, and deployment. It uses the Stremio addon protocol for Nuvio-compatible catalogue, metadata, and stream requests. The endpoint is not live until a Cloudflare D1 database is created and the account-specific GitHub Actions secrets are configured.
+
 ## Deployment
 Deploy to a persistent Node.js host like [Railway](https://railway.app/) or [Fly.io](https://fly.io/):
 - Set `PORT` (assigned automatically by host).
