@@ -2,6 +2,8 @@ import { BaseProvider } from './base.js';
 import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, metaCache } from '../services/cache.js';
 import { createHash } from 'node:crypto';
+import { normalizeLanguage } from '../utils/language.js';
+import { extractAwards } from '../utils/genreMapper.js';
 
 export function getApiKeyCacheScope(apiKey = '') {
     if (!apiKey) return 'default';
@@ -30,13 +32,22 @@ export class GoogleBooksProvider extends BaseProvider {
         return data && !data.error ? data : null;
     }
 
-    async search(query, skip = 0, apiKey = '') {
-        const url = this.baseUrl + '?q=' + encodeURIComponent(query) + '&maxResults=40&startIndex=' + skip;
-        const data = await this._fetch(url, apiKey);
-        if (!data || !data.items) return [];
+    async search(query, skip = 0, apiKey = '', options = {}) {
+        const params = new URLSearchParams({
+            q: query,
+            maxResults: '40',
+            startIndex: String(skip)
+        });
+        if (options.orderBy === 'newest') params.set('orderBy', 'newest');
+        if (options.language) params.set('langRestrict', options.language);
 
-        const results = data.items.map(this._mapItem.bind(this)).filter(Boolean);
-        return results;
+        const data = await this._fetch(this.baseUrl + '?' + params.toString(), apiKey);
+        if (!data || !Array.isArray(data.items)) return [];
+        return data.items.map(this._mapItem.bind(this)).filter(Boolean);
+    }
+
+    async searchNewest(query = 'audiobook', skip = 0, apiKey = '') {
+        return this.search(query, skip, apiKey, { orderBy: 'newest' });
     }
 
     async searchByAuthor(author, skip = 0, apiKey = '') {
@@ -78,8 +89,14 @@ export class GoogleBooksProvider extends BaseProvider {
         const poster = imageLinks.extraLarge || imageLinks.large || imageLinks.medium || imageLinks.thumbnail || null;
         
         let ratings = null;
-        if (info.averageRating) {
-            ratings = { stars: Math.round(info.averageRating * 2), id: 'gb:' + item.id };
+        if (Number.isFinite(info.averageRating) && info.averageRating > 0) {
+            ratings = {
+                score: info.averageRating,
+                count: Number.isFinite(info.ratingsCount) ? info.ratingsCount : 0,
+                stars: Math.round(info.averageRating * 2),
+                id: 'gb:' + item.id,
+                source: 'Google Books'
+            };
         }
 
         const isbnObj = info.industryIdentifiers 
@@ -98,6 +115,8 @@ export class GoogleBooksProvider extends BaseProvider {
             poster: poster ? poster.replace(/^http:/, 'https:') : null,
             background: poster ? poster.replace(/^http:/, 'https:') : null,
             genres: info.categories || [],
+            language: normalizeLanguage(info.language),
+            awards: extractAwards([...(info.categories || []), info.title, info.description]),
             year: info.publishedDate ? new Date(info.publishedDate).getFullYear() : null,
             ratings: ratings,
             series: null
