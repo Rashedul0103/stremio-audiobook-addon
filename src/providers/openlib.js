@@ -3,15 +3,18 @@ import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, metaCache } from '../services/cache.js';
 import { normalizeLanguage } from '../utils/language.js';
 import { extractAwards } from '../utils/genreMapper.js';
+import { toLibraryLanguageCode } from '../utils/language.js';
 
 export class OpenLibraryProvider extends BaseProvider {
     constructor() { super('Open Library'); }
 
-    async search(query, skip = 0) {
-        const cacheKey = `ol_search_${query}_${skip}`;
+    async search(query, skip = 0, language = '') {
+        const languageCode = toLibraryLanguageCode(language);
+        const effectiveQuery = languageCode ? `${query} language:${languageCode}` : query;
+        const cacheKey = `ol_search_${effectiveQuery}_${skip}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
-        const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=50&offset=${skip}`;
+        const url = `https://openlibrary.org/search.json?q=${encodeURIComponent(effectiveQuery)}&limit=50&offset=${skip}`;
         const data = await fetchWithRetry(url);
         if (!data || !data.docs) return [];
 
@@ -20,9 +23,9 @@ export class OpenLibraryProvider extends BaseProvider {
         return results;
     }
 
-    async searchByAuthor(author, skip = 0) {
+    async searchByAuthor(author, skip = 0, language = '') {
         const escaped = String(author).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        return this.search(`author:"${escaped}"`, skip);
+        return this.search(`author:"${escaped}"`, skip, language);
     }
 
     async getMeta(id) {
@@ -50,7 +53,7 @@ export class OpenLibraryProvider extends BaseProvider {
     }
 
     async getByNarrator() { return []; }
-    async getByGenre(genre, skip = 0) { return this.search(`subject:${genre}`, skip); }
+    async getByGenre(genre, skip = 0, language = '') { return this.search(`subject:${genre}`, skip, language); }
     async getSeries(seriesName, skip = 0) { return this.search(`series:${seriesName}`, skip); }
     async getStreams() { return []; }
 
