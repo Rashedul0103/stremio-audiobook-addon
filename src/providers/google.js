@@ -26,8 +26,8 @@ export class GoogleBooksProvider extends BaseProvider {
         }
 
         const data = await fetchWithRetry(finalUrl);
-        if (data) catalogCache.set(cacheKey, data);
-        return data;
+        if (data && !data.error) catalogCache.set(cacheKey, data, Array.isArray(data.items) && data.items.length === 0 ? 60 : 0);
+        return data && !data.error ? data : null;
     }
 
     async search(query, skip = 0, apiKey = '') {
@@ -35,7 +35,13 @@ export class GoogleBooksProvider extends BaseProvider {
         const data = await this._fetch(url, apiKey);
         if (!data || !data.items) return [];
 
-        return data.items.map(this._mapItem.bind(this)).filter(Boolean);
+        const results = data.items.map(this._mapItem.bind(this)).filter(Boolean);
+        return results;
+    }
+
+    async searchByAuthor(author, skip = 0, apiKey = '') {
+        const escaped = String(author).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        return this.search(`inauthor:"${escaped}"`, skip, apiKey);
     }
 
     async getMeta(id, apiKey = '') {

@@ -18,7 +18,7 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
         let results = [];
 
         if (id === 'pinned_author' && config.pinned_author) {
-            results = await aggregator.searchAndSynthesize(config.pinned_author, skip, config.google_books_api_key);
+            results = await aggregator.searchByAuthor(config.pinned_author, skip, config.google_books_api_key);
         }
         else if (id === 'pinned_narrator' && config.pinned_narrator) {
             results = await aggregator.searchAndSynthesize(config.pinned_narrator, skip, config.google_books_api_key);

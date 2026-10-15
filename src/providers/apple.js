@@ -1,6 +1,6 @@
 import { BaseProvider } from './base.js';
 import { fetchWithRetry } from '../utils/fetchWithRetry.js';
-import { catalogCache } from '../services/cache.js';
+import { catalogCache, metaCache } from '../services/cache.js';
 
 export class AppleBooksProvider extends BaseProvider {
     constructor() { super('Apple Books'); }
@@ -14,11 +14,29 @@ export class AppleBooksProvider extends BaseProvider {
         if (!data || !data.results) return [];
         
         const results = data.results.map(this._mapItem.bind(this)).filter(Boolean);
-        catalogCache.set(cacheKey, results);
+        catalogCache.set(cacheKey, results, results.length === 0 ? 60 : 0);
         return results;
     }
 
-    async getMeta() { return null; }
+    async getMeta(id) {
+        if (!id?.startsWith('itunes:')) return null;
+        const collectionId = id.substring(7);
+        const cacheKey = `apple_meta_${collectionId}`;
+        if (metaCache.has(cacheKey)) return metaCache.get(cacheKey);
+
+        const url = new URL('https://itunes.apple.com/lookup');
+        url.searchParams.set('id', collectionId);
+        url.searchParams.set('entity', 'audiobook');
+        const data = await fetchWithRetry(url.toString());
+        if (!data || !Array.isArray(data.results)) return null;
+
+        const item = data.results.find(result =>
+            String(result.collectionId || result.collectionID || '') === collectionId
+        ) || data.results.find(result => result.wrapperType === 'collection') || data.results[0];
+        const meta = this._mapItem(item);
+        if (meta) metaCache.set(cacheKey, meta);
+        return meta;
+    }
     async getStreams() { return []; }
     async getByNarrator(narrator, skip = 0) { return this.search(narrator, skip); }
     async getByGenre(genre, skip = 0) { return this.search(genre, skip); }

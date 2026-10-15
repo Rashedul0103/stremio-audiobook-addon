@@ -14,8 +14,13 @@ export class OpenLibraryProvider extends BaseProvider {
         if (!data || !data.docs) return [];
 
         const results = data.docs.map(this._mapDoc.bind(this)).filter(Boolean);
-        catalogCache.set(cacheKey, results);
+        catalogCache.set(cacheKey, results, results.length === 0 ? 60 : 0);
         return results;
+    }
+
+    async searchByAuthor(author, skip = 0) {
+        const escaped = String(author).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        return this.search(`author:"${escaped}"`, skip);
     }
 
     async getMeta(id) {

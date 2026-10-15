@@ -3,9 +3,33 @@ import { OpenLibraryProvider } from '../providers/openlib.js';
 import { GoogleBooksProvider, getApiKeyCacheScope } from '../providers/google.js';
 import { AudnexusProvider } from '../providers/audnexus.js';
 import { LibriVoxProvider, InternetArchiveProvider } from '../providers/streams.js';
-import { generateWorkFingerprint, generateSlug, cleanNarrator } from '../utils/normalizer.js';
+import { generateWorkFingerprint, generateSlug, cleanNarrator, cleanAuthor, cleanTitle } from '../utils/normalizer.js';
 import { normalizeGenres, extractAwards } from '../utils/genreMapper.js';
 import { catalogCache, metaCache } from './cache.js';
+
+function authorMatches(query, authors = []) {
+    const wanted = cleanTitle(query).split(/\s+/).filter(Boolean);
+    if (wanted.length === 0) return true;
+    return authors.some(author => {
+        const tokens = cleanTitle(author).split(/\s+/).filter(Boolean);
+        return wanted.every(token => tokens.includes(token));
+    });
+}
+
+function sameWorkTitle(left, right) {
+    const a = cleanTitle(left);
+    const b = cleanTitle(right);
+    return Boolean(a && b && a === b);
+}
+
+function sameWorkAuthors(leftAuthors = [], rightAuthors = []) {
+    if (!leftAuthors.length || !rightAuthors.length) return true;
+    return leftAuthors.some(left => authorMatches(left, rightAuthors));
+}
+
+function escapeQueryPhrase(value) {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').trim();
+}
 
 export class Aggregator {
     constructor() {
@@ -31,39 +55,42 @@ export class Aggregator {
             if (!item || !item.title) continue;
 
             const ext = item.externalIds || {};
-            const workFp = generateWorkFingerprint(item.title, item.authors);
-            
-            // Gather all candidate identity keys for this item
+            const workFp = cleanAuthor(item.authors)
+                ? generateWorkFingerprint(item.title, item.authors)
+                : null;
+
             const keys = [];
-            if (item.id?.startsWith('isbn:')) keys.push(item.id);
+            if (item.id && /^(isbn|asin|olid|librivox|ia|gb|itunes):/.test(item.id)) keys.push(item.id);
             if (ext.isbn) keys.push(`isbn:${ext.isbn}`);
-            if (item.id?.startsWith('asin:')) keys.push(item.id);
             if (ext.asin) keys.push(`asin:${ext.asin}`);
-            if (item.id?.startsWith('olid:')) keys.push(item.id);
+            if (ext.olid) keys.push(String(ext.olid).startsWith('olid:') ? String(ext.olid) : `olid:${ext.olid}`);
             if (workFp && workFp !== ':') keys.push(`work:${workFp}`);
 
-            // Find if any key matches an existing cluster
-            let targetCluster = null;
-            for (const key of keys) {
-                if (idToCluster.has(key)) {
-                    targetCluster = idToCluster.get(key);
-                    break;
-                }
-            }
+            // One record can bridge two previously separate clusters. Merge both clusters,
+            // then update every index entry so the bridge actually joins the complete groups.
+            const matches = [...new Set(keys.map(key => idToCluster.get(key)).filter(Boolean))];
+            let targetCluster = matches[0];
 
             if (!targetCluster) {
                 targetCluster = [];
                 clusters.push(targetCluster);
+            } else {
+                for (const otherCluster of matches.slice(1)) {
+                    if (otherCluster === targetCluster) continue;
+                    targetCluster.push(...otherCluster);
+                    const index = clusters.indexOf(otherCluster);
+                    if (index !== -1) clusters.splice(index, 1);
+                    for (const [key, cluster] of idToCluster) {
+                        if (cluster === otherCluster) idToCluster.set(key, targetCluster);
+                    }
+                }
             }
 
             targetCluster.push(item);
-            for (const key of keys) {
-                idToCluster.set(key, targetCluster);
-            }
+            for (const key of keys) idToCluster.set(key, targetCluster);
         }
 
-        // Deduplicate clusters (in case references merged)
-        return Array.from(new Set(clusters));
+        return clusters.filter(cluster => cluster.length > 0);
     }
 
     _mergeGroup(group) {
@@ -82,17 +109,6 @@ export class Aggregator {
         const rawNarrators = [];
 
         for (const item of group) {
-            // Assign canonical ID with priority: ISBN -> ASIN -> OLID -> LibriVox -> Slug
-            if (!canonical.id) {
-                if (item.id?.startsWith('isbn:')) canonical.id = item.id;
-                else if (item.externalIds?.isbn) canonical.id = `isbn:${item.externalIds.isbn}`;
-                else if (item.id?.startsWith('asin:')) canonical.id = item.id;
-                else if (item.externalIds?.asin) canonical.id = `asin:${item.externalIds.asin}`;
-                else if (item.id?.startsWith('olid:')) canonical.id = item.id;
-                else if (item.id?.startsWith('librivox:')) canonical.id = item.id;
-                else if (item.id?.startsWith('ia:')) canonical.id = item.id;
-            }
-
             if (item.id && !canonical.sourceIds.includes(item.id)) canonical.sourceIds.push(item.id);
             if (item.rights) canonical.rights.push(...(Array.isArray(item.rights) ? item.rights : [item.rights]));
 
@@ -126,6 +142,27 @@ export class Aggregator {
             // Rights are resolved conservatively after the canonical ID is selected.
         }
 
+        // Identifier preference is independent of provider display/metadata priority.
+        // Otherwise an Apple result encountered first can hide a better ISBN identifier.
+        const idCandidates = [];
+        const addCandidate = (id, priority) => {
+            if (id) idCandidates.push({ id: String(id), priority });
+        };
+        for (const item of group) {
+            const id = item.id || '';
+            if (id.startsWith('isbn:')) addCandidate(id, 1);
+            else if (item.externalIds?.isbn) addCandidate(`isbn:${item.externalIds.isbn}`, 1);
+            if (id.startsWith('asin:')) addCandidate(id, 2);
+            else if (item.externalIds?.asin) addCandidate(`asin:${item.externalIds.asin}`, 2);
+            if (id.startsWith('olid:')) addCandidate(id, 3);
+            else if (item.externalIds?.olid) addCandidate(String(item.externalIds.olid).startsWith('olid:') ? item.externalIds.olid : `olid:${item.externalIds.olid}`, 3);
+            if (id.startsWith('librivox:')) addCandidate(id, 4);
+            if (id.startsWith('ia:')) addCandidate(id, 5);
+            if (id.startsWith('gb:')) addCandidate(id, 6);
+            if (id.startsWith('itunes:')) addCandidate(id, 7);
+        }
+        canonical.id = idCandidates.sort((a, b) => a.priority - b.priority)[0]?.id || null;
+
         // Do not attribute Internet Archive rights to unrelated editions in the same work cluster.
         canonical.isPublicDomain =
             group.some(item => item.provider === 'librivox' && item.isPublicDomain === true) ||
@@ -143,6 +180,36 @@ export class Aggregator {
         }
 
         return canonical;
+    }
+
+    _synthesizeItems(allResults) {
+        const clusters = this._clusterItems(allResults);
+        const synthesized = [];
+
+        for (const group of clusters) {
+            const narratorMap = new Map();
+            for (const item of group) {
+                for (const narr of (item.narrators || [])) {
+                    const cleaned = cleanNarrator(narr);
+                    if (cleaned !== 'unknown') narratorMap.set(cleaned, narr);
+                }
+            }
+
+            if (narratorMap.size > 1) {
+                for (const [cleanedKey] of narratorMap) {
+                    const filteredGroup = group.filter(item => {
+                        const hasThisNarrator = (item.narrators || []).some(n => cleanNarrator(n) === cleanedKey);
+                        const hasNoNarrator = !item.narrators || item.narrators.length === 0 || cleanNarrator(item.narrators) === 'unknown';
+                        return hasThisNarrator || hasNoNarrator;
+                    });
+                    synthesized.push(this._mergeGroup(filteredGroup));
+                }
+            } else {
+                synthesized.push(this._mergeGroup(group));
+            }
+        }
+
+        return synthesized.filter(Boolean);
     }
 
     async searchAndSynthesize(query, skip = 0, googleApiKey = '') {
@@ -163,35 +230,34 @@ export class Aggregator {
             ...(librivoxRes.status === 'fulfilled' ? librivoxRes.value : [])
         ];
 
-        const clusters = this._clusterItems(allResults);
-        const synthesized = [];
+        const synthesized = this._synthesizeItems(allResults);
+        // A zero-result aggregate may mean every provider is temporarily unavailable.
+        // Keep this negative cache short so recovery is visible without waiting a full day.
+        catalogCache.set(cacheKey, synthesized, synthesized.length === 0 ? 60 : 0);
+        return synthesized;
+    }
 
-        for (const group of clusters) {
-            // Check for distinctly verified narrators
-            const narratorMap = new Map();
-            for (const item of group) {
-                for (const narr of (item.narrators || [])) {
-                    const cleaned = cleanNarrator(narr);
-                    if (cleaned !== 'unknown') narratorMap.set(cleaned, narr);
-                }
-            }
+    async searchByAuthor(author, skip = 0, googleApiKey = '') {
+        const cacheKey = `agg_author_${author}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
+        if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
-            if (narratorMap.size > 1) {
-                // Bifurcate into distinct edition cards for each verified narrator
-                for (const [cleanedKey] of narratorMap) {
-                    const filteredGroup = group.filter(item => {
-                        const hasThisNarrator = (item.narrators || []).some(n => cleanNarrator(n) === cleanedKey);
-                        const hasNoNarrator = !item.narrators || item.narrators.length === 0 || cleanNarrator(item.narrators) === 'unknown';
-                        return hasThisNarrator || hasNoNarrator;
-                    });
-                    synthesized.push(this._mergeGroup(filteredGroup));
-                }
-            } else {
-                synthesized.push(this._mergeGroup(group));
-            }
-        }
+        const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
+            this.providers.apple.search(author, skip),
+            this.providers.google.searchByAuthor(author, skip, googleApiKey),
+            this.providers.openlib.searchByAuthor(author, skip),
+            this.providers.librivox.searchByAuthor(author, skip),
+            this.providers.internetarchive.searchByAuthor(author, skip)
+        ]);
+        const results = [
+            ...(appleRes.status === 'fulfilled' ? appleRes.value : []),
+            ...(googleRes.status === 'fulfilled' ? googleRes.value : []),
+            ...(openlibRes.status === 'fulfilled' ? openlibRes.value : []),
+            ...(librivoxRes.status === 'fulfilled' ? librivoxRes.value : []),
+            ...(iaRes.status === 'fulfilled' ? iaRes.value : [])
+        ].filter(item => authorMatches(author, item.authors || []));
 
-        catalogCache.set(cacheKey, synthesized);
+        const synthesized = this._synthesizeItems(results);
+        catalogCache.set(cacheKey, synthesized, synthesized.length === 0 ? 60 : 0);
         return synthesized;
     }
 
@@ -234,6 +300,12 @@ export class Aggregator {
         } else if (id.startsWith('ia:')) {
             const res = await this.providers.internetarchive.getMeta(id);
             if (res) results.push(res);
+        } else if (id.startsWith('gb:')) {
+            const res = await this.providers.google.getMeta(id, googleApiKey);
+            if (res) results.push(res);
+        } else if (id.startsWith('itunes:')) {
+            const res = await this.providers.apple.getMeta(id);
+            if (res) results.push(res);
         } else if (id.startsWith('slug:')) {
             const cleanQuery = id.substring(5).replace(/-/g, ' ');
             const searchResults = await this.searchAndSynthesize(cleanQuery, 0, googleApiKey);
@@ -252,26 +324,73 @@ export class Aggregator {
     }
 
     /**
-     * Resolves playable streams with automatic LibriVox fallback for ISBN/Slug items
+     * Resolves streams from known provider IDs first, then looks for exact title/author
+     * matches in LibriVox and Internet Archive. Never send the author inside LibriVox's
+     * title parameter, and never expose IA results as public-domain audio without rights evidence.
      */
     async getStreams(id, googleApiKey = '') {
-        let streams = [];
+        const meta = await this.getMetaAndSynthesize(id, googleApiKey);
+        if (!meta) return [];
 
-        if (id.startsWith('librivox:')) {
-            const res = await this.providers.librivox.getStreams(id);
-            if (res) streams.push(...res);
-        } else if (id.startsWith('ia:')) {
-            const res = await this.providers.internetarchive.getStreams(id);
-            if (res) streams.push(...res);
-        } else {
-            // For isbn:, asin:, or slug:, resolve metadata and query LibriVox by title
-            const meta = await this.getMetaAndSynthesize(id, googleApiKey);
-            if (meta?.title) {
-                const query = `${meta.title} ${meta.authors?.[0] || ''}`.trim();
-                const lvBooks = await this.providers.librivox.search(query, 0);
-                if (lvBooks.length > 0) {
-                    const lvStreams = await this.providers.librivox.getStreams(lvBooks[0].id);
-                    if (lvStreams) streams.push(...lvStreams);
+        const streams = [];
+        const seenUrls = new Set();
+        const visitedSources = new Set();
+
+        const appendStreams = candidates => {
+            for (const stream of candidates || []) {
+                if (!stream?.url || seenUrls.has(stream.url)) continue;
+                seenUrls.add(stream.url);
+                streams.push(stream);
+            }
+        };
+
+        const resolveKnownSource = async sourceId => {
+            if (!sourceId || visitedSources.has(sourceId)) return;
+            visitedSources.add(sourceId);
+
+            if (sourceId.startsWith('librivox:')) {
+                appendStreams(await this.providers.librivox.getStreams(sourceId));
+            } else if (sourceId.startsWith('ia:')) {
+                const sourceMeta = sourceId === id ? meta : await this.providers.internetarchive.getMeta(sourceId);
+                if (sourceMeta?.isPublicDomain === true) {
+                    appendStreams(await this.providers.internetarchive.getStreams(sourceId));
+                }
+            }
+        };
+
+        for (const sourceId of [id, ...(meta.sourceIds || [])]) {
+            await resolveKnownSource(sourceId);
+        }
+
+        if (meta.title) {
+            const [lvResult, iaResult] = await Promise.allSettled([
+                this.providers.librivox.searchByTitle(meta.title, 0),
+                this.providers.internetarchive.searchByTitle(meta.title, 0)
+            ]);
+
+            const matchesWork = candidate =>
+                sameWorkTitle(candidate?.title, meta.title) &&
+                sameWorkAuthors(meta.authors || [], candidate?.authors || []);
+
+            const lvBooks = (lvResult.status === 'fulfilled' ? lvResult.value : [])
+                .filter(matchesWork)
+                .slice(0, 3);
+            for (const book of lvBooks) {
+                if (book?.id && !visitedSources.has(book.id)) {
+                    await resolveKnownSource(book.id);
+                }
+            }
+
+            const iaBooks = (iaResult.status === 'fulfilled' ? iaResult.value : [])
+                .filter(book => book?.isPublicDomain === true && matchesWork(book))
+                .slice(0, 3);
+            for (const book of iaBooks) {
+                if (!book?.id || visitedSources.has(book.id)) continue;
+                // Re-read full metadata before offering playback; search-index rights can be stale.
+                const fullMeta = await this.providers.internetarchive.getMeta(book.id);
+                if (fullMeta?.isPublicDomain === true) {
+                    visitedSources.add(book.id);
+                    appendStreams(await this.providers.internetarchive.getStreams(book.id));
                 }
             }
         }
