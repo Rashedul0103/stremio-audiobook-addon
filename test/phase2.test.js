@@ -73,7 +73,7 @@ test('empty aggregate results use a short negative cache TTL', async () => {
     const results = await aggregator.searchAndSynthesize(query, 0);
     assert.deepEqual(results, []);
 
-    const key = 'agg_search_' + query + '_0_default';
+    const key = 'agg_search_' + query + '_0_relevance_default';
     const expiresAt = catalogCache.getTtl(key);
     assert.ok(expiresAt);
     const remainingSeconds = (expiresAt - Date.now()) / 1000;
