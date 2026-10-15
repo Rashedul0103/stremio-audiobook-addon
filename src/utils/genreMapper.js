@@ -16,7 +16,7 @@ const awardKeywords = [
     'goodreads choice award', 'man booker prize', 'booker prize'
 ];
 
-const awardAchievement = /\\b(winner|winners|won|recipient|recipients|award[- ]winning|received|awarded)\\b/i;
+const awardAchievement = /\b(winner|winners|won|recipient|recipients|award[- ]winning|received|awarded)\b/i;
 
 export function normalizeGenres(genres) {
     if (!genres || !Array.isArray(genres)) return [];
@@ -37,13 +37,13 @@ export function extractAwards(evidence) {
 
     for (const entry of entries) {
         if (entry === null || entry === undefined) continue;
-        const text = String(entry).replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();
+        const text = String(entry).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
         const lower = text.toLowerCase();
         if (!awardAchievement.test(lower)) continue;
 
         for (const keyword of awardKeywords) {
             if (lower.includes(keyword)) {
-                awards.add(keyword.replace(/\\b\\w/g, character => character.toUpperCase()));
+                awards.add(keyword.replace(/\b\w/g, character => character.toUpperCase()));
             }
         }
     }
