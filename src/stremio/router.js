@@ -6,7 +6,7 @@ import { filterByLanguage } from '../utils/language.js';
 
 const builder = new addonBuilder(manifest);
 function searchItems(query, skip, config, options = {}) {
-    return searchItems(query, skip, config, {
+    return aggregator.searchAndSynthesize(query, skip, config.google_books_api_key, {
         ...options,
         language: config.language
     });
