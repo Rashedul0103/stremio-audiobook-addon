@@ -324,26 +324,73 @@ export class Aggregator {
     }
 
     /**
-     * Resolves playable streams with automatic LibriVox fallback for ISBN/Slug items
+     * Resolves streams from known provider IDs first, then looks for exact title/author
+     * matches in LibriVox and Internet Archive. Never send the author inside LibriVox's
+     * title parameter, and never expose IA results as public-domain audio without rights evidence.
      */
     async getStreams(id, googleApiKey = '') {
-        let streams = [];
+        const meta = await this.getMetaAndSynthesize(id, googleApiKey);
+        if (!meta) return [];
 
-        if (id.startsWith('librivox:')) {
-            const res = await this.providers.librivox.getStreams(id);
-            if (res) streams.push(...res);
-        } else if (id.startsWith('ia:')) {
-            const res = await this.providers.internetarchive.getStreams(id);
-            if (res) streams.push(...res);
-        } else {
-            // For isbn:, asin:, or slug:, resolve metadata and query LibriVox by title
-            const meta = await this.getMetaAndSynthesize(id, googleApiKey);
-            if (meta?.title) {
-                const query = `${meta.title} ${meta.authors?.[0] || ''}`.trim();
-                const lvBooks = await this.providers.librivox.search(query, 0);
-                if (lvBooks.length > 0) {
-                    const lvStreams = await this.providers.librivox.getStreams(lvBooks[0].id);
-                    if (lvStreams) streams.push(...lvStreams);
+        const streams = [];
+        const seenUrls = new Set();
+        const visitedSources = new Set();
+
+        const appendStreams = candidates => {
+            for (const stream of candidates || []) {
+                if (!stream?.url || seenUrls.has(stream.url)) continue;
+                seenUrls.add(stream.url);
+                streams.push(stream);
+            }
+        };
+
+        const resolveKnownSource = async sourceId => {
+            if (!sourceId || visitedSources.has(sourceId)) return;
+            visitedSources.add(sourceId);
+
+            if (sourceId.startsWith('librivox:')) {
+                appendStreams(await this.providers.librivox.getStreams(sourceId));
+            } else if (sourceId.startsWith('ia:')) {
+                const sourceMeta = sourceId === id ? meta : await this.providers.internetarchive.getMeta(sourceId);
+                if (sourceMeta?.isPublicDomain === true) {
+                    appendStreams(await this.providers.internetarchive.getStreams(sourceId));
+                }
+            }
+        };
+
+        for (const sourceId of [id, ...(meta.sourceIds || [])]) {
+            await resolveKnownSource(sourceId);
+        }
+
+        if (meta.title) {
+            const [lvResult, iaResult] = await Promise.allSettled([
+                this.providers.librivox.searchByTitle(meta.title, 0),
+                this.providers.internetarchive.searchByTitle(meta.title, 0)
+            ]);
+
+            const matchesWork = candidate =>
+                sameWorkTitle(candidate?.title, meta.title) &&
+                sameWorkAuthors(meta.authors || [], candidate?.authors || []);
+
+            const lvBooks = (lvResult.status === 'fulfilled' ? lvResult.value : [])
+                .filter(matchesWork)
+                .slice(0, 3);
+            for (const book of lvBooks) {
+                if (book?.id && !visitedSources.has(book.id)) {
+                    await resolveKnownSource(book.id);
+                }
+            }
+
+            const iaBooks = (iaResult.status === 'fulfilled' ? iaResult.value : [])
+                .filter(book => book?.isPublicDomain === true && matchesWork(book))
+                .slice(0, 3);
+            for (const book of iaBooks) {
+                if (!book?.id || visitedSources.has(book.id)) continue;
+                // Re-read full metadata before offering playback; search-index rights can be stale.
+                const fullMeta = await this.providers.internetarchive.getMeta(book.id);
+                if (fullMeta?.isPublicDomain === true) {
+                    visitedSources.add(book.id);
+                    appendStreams(await this.providers.internetarchive.getStreams(book.id));
                 }
             }
         }
