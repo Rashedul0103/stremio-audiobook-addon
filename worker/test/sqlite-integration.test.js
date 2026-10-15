@@ -7,12 +7,14 @@ import { DatabaseSync } from "node:sqlite";
 import worker from "../src/index.js";
 
 const workerRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const migrationPath = path.join(workerRoot, "migrations/0001_create_catalogue.sql");
+const migrationsRoot = path.join(workerRoot, "migrations");
 
 class SqliteD1 {
   constructor() {
     this.sqlite = new DatabaseSync(":memory:");
-    this.sqlite.exec(fs.readFileSync(migrationPath, "utf8"));
+    for (const migration of fs.readdirSync(migrationsRoot).filter((name) => name.endsWith(".sql")).sort()) {
+      this.sqlite.exec(fs.readFileSync(path.join(migrationsRoot, migration), "utf8"));
+    }
   }
 
   prepare(sql) {
