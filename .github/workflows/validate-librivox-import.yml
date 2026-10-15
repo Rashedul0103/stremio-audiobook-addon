@@ -1,0 +1,99 @@
+name: Validate full LibriVox catalogue import
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/validate-librivox-import.yml"
+      - "scripts/build-librivox-d1-import.mjs"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: librivox-import-validation
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout addon
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Clone the current LibriVox playlist repository
+        run: git clone --depth 1 https://github.com/Rashedul0103/librivox_audiobooks.git "$RUNNER_TEMP/librivox_audiobooks"
+
+      - name: Build the full catalogue import without deploying
+        run: node scripts/build-librivox-d1-import.mjs "$RUNNER_TEMP/librivox_audiobooks" "$RUNNER_TEMP/librivox-d1-import"
+
+      - name: Validate import sizes and free-tier write budget
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          import path from "node:path";
+
+          const dir = process.env.RUNNER_TEMP + "/librivox-d1-import";
+          const summary = JSON.parse(fs.readFileSync(path.join(dir, "summary.json"), "utf8"));
+          const files = fs.readdirSync(dir).filter((name) => name.endsWith(".sql")).sort();
+          let maxFileBytes = 0;
+          let estimatedRowWrites = 0;
+
+          for (const name of files) {
+            const file = path.join(dir, name);
+            const contents = fs.readFileSync(file, "utf8");
+            const bytes = Buffer.byteLength(contents, "utf8");
+            maxFileBytes = Math.max(maxFileBytes, bytes);
+
+            if (bytes > 300000) {
+              throw new Error(name + " exceeds the expected per-batch size: " + bytes + " bytes");
+            }
+
+            for (const line of contents.split(/\r?\n/)) {
+              if (/^INSERT INTO books\b/i.test(line) ||
+                  /^UPDATE books SET\b/i.test(line) ||
+                  /^INSERT OR REPLACE INTO genres\b/i.test(line)) {
+                estimatedRowWrites += 1;
+              }
+            }
+          }
+
+          if (!summary.books || !summary.chapters) {
+            throw new Error("The full import produced no books or no audio chapters.");
+          }
+          for (const language of ["English", "Bangla", "Hindi", "Urdu", "Arabic", "Turkish"]) {
+            if (!summary.languages[language]) {
+              throw new Error("No importable records were found for " + language);
+            }
+          }
+          if (estimatedRowWrites >= 100000) {
+            throw new Error("Estimated initial D1 row writes (" + estimatedRowWrites + ") meet or exceed the 100,000/day Free-plan allowance.");
+          }
+
+          const report = {
+            ...summary,
+            sqlBatchFiles: files.length,
+            maxSqlBatchBytes: maxFileBytes,
+            estimatedRowWrites,
+            cloudflareDeployed: false
+          };
+          fs.writeFileSync(path.join(dir, "validation-report.json"), JSON.stringify(report, null, 2) + "\n");
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, "### Full LibriVox import dry run\n\nJSON report is attached as a workflow artifact.\n");
+          console.log(JSON.stringify(report, null, 2));
+          NODE
+
+      - name: Upload import validation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: librivox-import-validation-report
+          path: ${{ runner.temp }}/librivox-d1-import/validation-report.json
+          if-no-files-found: error
+          retention-days: 14
