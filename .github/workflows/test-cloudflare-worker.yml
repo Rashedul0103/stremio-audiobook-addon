@@ -1,0 +1,33 @@
+name: Test Cloudflare audiobook Worker
+
+on:
+  push:
+    branches: [main, cloudflare-worker-catalogue]
+    paths:
+      - "worker/**"
+      - "scripts/build-librivox-d1-import.mjs"
+      - ".github/workflows/test-cloudflare-worker.yml"
+  pull_request:
+    paths:
+      - "worker/**"
+      - "scripts/build-librivox-d1-import.mjs"
+      - ".github/workflows/test-cloudflare-worker.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Check Worker syntax
+        run: node --check worker/src/index.js
+      - name: Check import builder syntax
+        run: node --check scripts/build-librivox-d1-import.mjs
+      - name: Run Worker tests
+        run: node --test worker/test/worker.test.js
