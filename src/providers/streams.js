@@ -3,6 +3,7 @@ import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, streamCache, metaCache } from '../services/cache.js';
 import { normalizeLanguage } from '../utils/language.js';
 import { normalizeGenres, extractAwards } from '../utils/genreMapper.js';
+import { toLibraryLanguageCode } from '../utils/language.js';
 
 function escapeSearchPhrase(value) {
     return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').trim();
@@ -151,12 +152,14 @@ export class LibriVoxProvider extends BaseProvider {
 export class InternetArchiveProvider extends BaseProvider {
     constructor() { super('Internet Archive'); }
 
-    async search(query, skip = 0) {
-        const cacheKey = `ia_search_${query}_${skip}`;
+    async search(query, skip = 0, language = '') {
+        const languageCode = toLibraryLanguageCode(language);
+        const effectiveQuery = languageCode ? `${query} AND language:${languageCode}` : query;
+        const cacheKey = `ia_search_${effectiveQuery}_${skip}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
         const url = new URL('https://archive.org/advancedsearch.php');
-        url.searchParams.set('q', `${query} AND mediatype:audio`);
+        url.searchParams.set('q', `${effectiveQuery} AND mediatype:audio`);
         for (const field of ['identifier', 'title', 'creator', 'description', 'year', 'licenseurl', 'rights', 'copyright_status', 'language', 'subject']) {
             url.searchParams.append('fl[]', field);
         }
@@ -172,16 +175,16 @@ export class InternetArchiveProvider extends BaseProvider {
         return results;
     }
 
-    async searchByTitle(title, skip = 0) {
-        return this.search(`title:"${escapeSearchPhrase(title)}"`, skip);
+    async searchByTitle(title, skip = 0, language = '') {
+        return this.search(`title:"${escapeSearchPhrase(title)}"`, skip, language);
     }
 
-    async searchByAuthor(author, skip = 0) {
-        return this.search(`creator:"${escapeSearchPhrase(author)}"`, skip);
+    async searchByAuthor(author, skip = 0, language = '') {
+        return this.search(`creator:"${escapeSearchPhrase(author)}"`, skip, language);
     }
 
-    async searchByGenre(genre, skip = 0) {
-        return this.search(`subject:"${escapeSearchPhrase(genre)}"`, skip);
+    async searchByGenre(genre, skip = 0, language = '') {
+        return this.search(`subject:"${escapeSearchPhrase(genre)}"`, skip, language);
     }
 
     async getMeta(id) {
