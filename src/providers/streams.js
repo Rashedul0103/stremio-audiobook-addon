@@ -1,6 +1,9 @@
 import { BaseProvider } from './base.js';
 import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, streamCache, metaCache } from '../services/cache.js';
+import { normalizeLanguage } from '../utils/language.js';
+import { normalizeGenres, extractAwards } from '../utils/genreMapper.js';
+import { toLibraryLanguageCode } from '../utils/language.js';
 
 function escapeSearchPhrase(value) {
     return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').trim();
@@ -62,6 +65,10 @@ export class LibriVoxProvider extends BaseProvider {
         return this._searchByField('author', author, skip);
     }
 
+    async searchByGenre(genre, skip = 0) {
+        return this._searchByField('genre', genre, skip);
+    }
+
     async _searchByField(field, query, skip = 0) {
         const cacheKey = `lv_${field}_${query}_${skip}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
@@ -69,6 +76,7 @@ export class LibriVoxProvider extends BaseProvider {
         const url = new URL('https://librivox.org/api/feed/audiobooks');
         url.searchParams.set(field, query);
         url.searchParams.set('format', 'json');
+        url.searchParams.set('extended', '1');
         url.searchParams.set('limit', '50');
         url.searchParams.set('offset', String(skip));
 
@@ -131,7 +139,9 @@ export class LibriVoxProvider extends BaseProvider {
             description: book.description ? book.description.replace(/<[^>]+>/g, '') : null,
             poster: null,
             background: null,
-            genres: ['Classics', 'Public Domain'],
+            genres: [...new Set(['Classics', 'Public Domain', ...normalizeGenres((book.genres || []).map(genre => typeof genre === 'string' ? genre : genre.name).filter(Boolean))])],
+            language: normalizeLanguage(book.language),
+            awards: extractAwards([book.title, book.description]),
             year: book.copyright_year ? parseInt(book.copyright_year, 10) : null,
             isPublicDomain: true,
             externalIds: {}
@@ -142,13 +152,15 @@ export class LibriVoxProvider extends BaseProvider {
 export class InternetArchiveProvider extends BaseProvider {
     constructor() { super('Internet Archive'); }
 
-    async search(query, skip = 0) {
-        const cacheKey = `ia_search_${query}_${skip}`;
+    async search(query, skip = 0, language = '') {
+        const languageCode = toLibraryLanguageCode(language);
+        const effectiveQuery = languageCode ? `${query} AND language:${languageCode}` : query;
+        const cacheKey = `ia_search_${effectiveQuery}_${skip}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
         const url = new URL('https://archive.org/advancedsearch.php');
-        url.searchParams.set('q', `${query} AND mediatype:audio`);
-        for (const field of ['identifier', 'title', 'creator', 'description', 'year', 'licenseurl', 'rights', 'copyright_status']) {
+        url.searchParams.set('q', `${effectiveQuery} AND mediatype:audio`);
+        for (const field of ['identifier', 'title', 'creator', 'description', 'year', 'licenseurl', 'rights', 'copyright_status', 'language', 'subject']) {
             url.searchParams.append('fl[]', field);
         }
         url.searchParams.set('rows', '50');
@@ -163,12 +175,16 @@ export class InternetArchiveProvider extends BaseProvider {
         return results;
     }
 
-    async searchByTitle(title, skip = 0) {
-        return this.search(`title:"${escapeSearchPhrase(title)}"`, skip);
+    async searchByTitle(title, skip = 0, language = '') {
+        return this.search(`title:"${escapeSearchPhrase(title)}"`, skip, language);
     }
 
-    async searchByAuthor(author, skip = 0) {
-        return this.search(`creator:"${escapeSearchPhrase(author)}"`, skip);
+    async searchByAuthor(author, skip = 0, language = '') {
+        return this.search(`creator:"${escapeSearchPhrase(author)}"`, skip, language);
+    }
+
+    async searchByGenre(genre, skip = 0, language = '') {
+        return this.search(`subject:"${escapeSearchPhrase(genre)}"`, skip, language);
     }
 
     async getMeta(id) {
@@ -193,6 +209,9 @@ export class InternetArchiveProvider extends BaseProvider {
             genres: [],
             year: data.metadata.year ? parseInt(data.metadata.year, 10) : null,
             rights: data.metadata.rights || data.metadata.licenseurl || data.metadata.copyright_status || null,
+            language: normalizeLanguage(data.metadata.language),
+            genres: normalizeGenres(Array.isArray(data.metadata.subject) ? data.metadata.subject : data.metadata.subject ? [data.metadata.subject] : []),
+            awards: extractAwards([data.metadata.title, data.metadata.description, ...(Array.isArray(data.metadata.subject) ? data.metadata.subject : [data.metadata.subject || ''])]),
             isPublicDomain: isExplicitlyPublicDomain(data.metadata),
             externalIds: {}
         };
@@ -239,7 +258,9 @@ export class InternetArchiveProvider extends BaseProvider {
             description: item.description || null,
             poster: `https://archive.org/services/img/${item.identifier}`,
             background: null,
-            genres: [],
+            genres: normalizeGenres(Array.isArray(item.subject) ? item.subject : item.subject ? [item.subject] : []),
+            language: normalizeLanguage(item.language),
+            awards: extractAwards([item.title, item.description, ...(Array.isArray(item.subject) ? item.subject : [item.subject || ''])]),
             year: item.year ? parseInt(item.year, 10) : null,
             rights: item.rights || item.licenseurl || item.copyright_status || null,
             isPublicDomain: isExplicitlyPublicDomain(item),

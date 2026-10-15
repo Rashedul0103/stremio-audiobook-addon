@@ -4,7 +4,8 @@ import { GoogleBooksProvider, getApiKeyCacheScope } from '../providers/google.js
 import { AudnexusProvider } from '../providers/audnexus.js';
 import { LibriVoxProvider, InternetArchiveProvider } from '../providers/streams.js';
 import { generateWorkFingerprint, generateSlug, cleanNarrator, cleanAuthor, cleanTitle } from '../utils/normalizer.js';
-import { normalizeGenres, extractAwards } from '../utils/genreMapper.js';
+import { normalizeGenres } from '../utils/genreMapper.js';
+import { normalizeLanguage } from '../utils/language.js';
 import { catalogCache, metaCache } from './cache.js';
 
 function authorMatches(query, authors = []) {
@@ -29,6 +30,15 @@ function sameWorkAuthors(leftAuthors = [], rightAuthors = []) {
 
 function escapeQueryPhrase(value) {
     return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').trim();
+}
+
+function matchesGenre(item, genre) {
+    const wanted = normalizeGenres([genre])[0]?.toLowerCase();
+    if (!wanted) return false;
+    return (item?.genres || []).some(value => {
+        const actual = normalizeGenres([value])[0]?.toLowerCase();
+        return actual === wanted || Boolean(actual && actual.includes(wanted));
+    });
 }
 
 export class Aggregator {
@@ -100,7 +110,7 @@ export class Aggregator {
             id: null, type: 'movie', title: '', poster: null, background: null,
             description: null, genres: [], authors: [], narrators: [], year: null,
             abridged: null, series: null, ratings: null, awards: [], streams: [],
-            externalIds: {}, sourceIds: [], rights: [], isPublicDomain: false
+            externalIds: {}, sourceIds: [], rights: [], language: null, isPublicDomain: false
         };
 
         const providerPriority = { audnexus: 6, apple: 5, openlib: 4, google: 3, librivox: 2, ia: 1 };
@@ -121,6 +131,7 @@ export class Aggregator {
             if (!canonical.background && item.background) canonical.background = item.background;
             if (!canonical.description && item.description) canonical.description = item.description;
             if (!canonical.year && item.year) canonical.year = item.year;
+            if (!canonical.language && item.language) canonical.language = item.language;
             if (canonical.abridged === null && item.abridged !== undefined) canonical.abridged = item.abridged;
             if (!canonical.series && item.series?.length > 0) canonical.series = item.series[0];
             if (!canonical.ratings && item.ratings) canonical.ratings = item.ratings;
@@ -212,41 +223,81 @@ export class Aggregator {
         return synthesized.filter(Boolean);
     }
 
-    async searchAndSynthesize(query, skip = 0, googleApiKey = '') {
-        const cacheKey = `agg_search_${query}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
+    async searchAndSynthesize(query, skip = 0, googleApiKey = '', options = {}) {
+        const orderBy = options.orderBy === 'newest' ? 'newest' : 'relevance';
+        const cacheKey = `agg_search_${query}_${skip}_${orderBy}_${normalizeLanguage(options.language) || 'all'}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
-        const [appleRes, googleRes, openlibRes, librivoxRes] = await Promise.allSettled([
+        const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
             this.providers.apple.search(query, skip),
-            this.providers.google.search(query, skip, googleApiKey),
-            this.providers.openlib.search(query, skip),
-            this.providers.librivox.search(query, skip)
+            this.providers.google.search(query, skip, googleApiKey, { orderBy, language: options.language }),
+            this.providers.openlib.search(query, skip, options.language),
+            this.providers.librivox.search(query, skip),
+            this.providers.internetarchive.search(query, skip, options.language)
         ]);
 
         const allResults = [
             ...(appleRes.status === 'fulfilled' ? appleRes.value : []),
             ...(googleRes.status === 'fulfilled' ? googleRes.value : []),
             ...(openlibRes.status === 'fulfilled' ? openlibRes.value : []),
-            ...(librivoxRes.status === 'fulfilled' ? librivoxRes.value : [])
+            ...(librivoxRes.status === 'fulfilled' ? librivoxRes.value : []),
+            ...(iaRes.status === 'fulfilled' ? iaRes.value : [])
         ];
 
-        const synthesized = this._synthesizeItems(allResults);
+        let synthesized = this._synthesizeItems(allResults);
+        if (orderBy === 'newest') synthesized = synthesized.filter(item => Number.isFinite(item.year)).sort((a, b) => b.year - a.year);
         // A zero-result aggregate may mean every provider is temporarily unavailable.
         // Keep this negative cache short so recovery is visible without waiting a full day.
         catalogCache.set(cacheKey, synthesized, synthesized.length === 0 ? 60 : 0);
         return synthesized;
     }
 
-    async searchByAuthor(author, skip = 0, googleApiKey = '') {
-        const cacheKey = `agg_author_${author}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
+    async searchByGenre(genre, skip = 0, googleApiKey = '', language = '') {
+        const cacheKey = `agg_genre_${genre}_${skip}_${normalizeLanguage(language) || 'all'}_${getApiKeyCacheScope(googleApiKey)}`;
+        if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
+
+        const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
+            this.providers.apple.search(genre, skip),
+            this.providers.google.getByGenre(genre, skip, googleApiKey, language),
+            this.providers.openlib.getByGenre(genre, skip, language),
+            this.providers.librivox.searchByGenre(genre, skip),
+            this.providers.internetarchive.searchByGenre(genre, skip, language)
+        ]);
+        const raw = [
+            ...(appleRes.status === 'fulfilled' ? appleRes.value : []),
+            ...(googleRes.status === 'fulfilled' ? googleRes.value : []),
+            ...(openlibRes.status === 'fulfilled' ? openlibRes.value : []),
+            ...(librivoxRes.status === 'fulfilled' ? librivoxRes.value : []),
+            ...(iaRes.status === 'fulfilled' ? iaRes.value : [])
+        ];
+        const synthesized = this._synthesizeItems(raw).filter(item => matchesGenre(item, genre));
+        catalogCache.set(cacheKey, synthesized, synthesized.length === 0 ? 60 : 0);
+        return synthesized;
+    }
+
+    async searchByNarrator(narrator, skip = 0, googleApiKey = '', language = '') {
+        const cacheKey = `agg_narrator_${narrator}_${skip}_${normalizeLanguage(language) || 'all'}_${getApiKeyCacheScope(googleApiKey)}`;
+        if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
+        const candidates = await this.searchAndSynthesize(narrator, skip, googleApiKey, { language });
+        const expected = cleanNarrator(narrator);
+        const results = candidates.filter(item =>
+            expected !== 'unknown' &&
+            (item.narrators || []).some(value => cleanNarrator(value) === expected)
+        );
+        catalogCache.set(cacheKey, results, results.length === 0 ? 60 : 0);
+        return results;
+    }
+
+    async searchByAuthor(author, skip = 0, googleApiKey = '', language = '') {
+        const cacheKey = `agg_author_${author}_${skip}_${normalizeLanguage(language) || 'all'}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
         const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
             this.providers.apple.search(author, skip),
-            this.providers.google.searchByAuthor(author, skip, googleApiKey),
-            this.providers.openlib.searchByAuthor(author, skip),
+            this.providers.google.searchByAuthor(author, skip, googleApiKey, language),
+            this.providers.openlib.searchByAuthor(author, skip, language),
             this.providers.librivox.searchByAuthor(author, skip),
-            this.providers.internetarchive.searchByAuthor(author, skip)
+            this.providers.internetarchive.searchByAuthor(author, skip, language)
         ]);
         const results = [
             ...(appleRes.status === 'fulfilled' ? appleRes.value : []),

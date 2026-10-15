@@ -9,7 +9,14 @@ const genreMap = {
     'drama': 'Drama', 'action': 'Action', 'adventure': 'Adventure', 'speculative': 'Science Fiction'
 };
 
-const awardKeywords = ['audie award', 'grammy award', 'best audio book', 'audiobook of the year', 'hugo award', 'nebula award'];
+const awardKeywords = [
+    'audie award', 'grammy award', 'best audiobook', 'best audio book',
+    'audiobook of the year', 'hugo award', 'nebula award', 'newbery medal',
+    'caldecott medal', 'pulitzer prize', 'national book award',
+    'goodreads choice award', 'man booker prize', 'booker prize'
+];
+
+const awardAchievement = /\b(winner|winners|won|recipient|recipients|award[- ]winning|received|awarded)\b/i;
 
 export function normalizeGenres(genres) {
     if (!genres || !Array.isArray(genres)) return [];
@@ -23,14 +30,22 @@ export function normalizeGenres(genres) {
     return Array.from(normalized);
 }
 
-export function extractAwards(subjects) {
-    if (!subjects || !Array.isArray(subjects)) return [];
+export function extractAwards(evidence) {
+    if (!evidence) return [];
+    const entries = Array.isArray(evidence) ? evidence : [evidence];
     const awards = new Set();
-    for (const subject of subjects) {
-        const lower = String(subject).toLowerCase();
+
+    for (const entry of entries) {
+        if (entry === null || entry === undefined) continue;
+        const text = String(entry).replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        const lower = text.toLowerCase();
+        if (!awardAchievement.test(lower)) continue;
+
         for (const keyword of awardKeywords) {
-            if (lower.includes(keyword)) awards.add(subject.trim());
+            if (lower.includes(keyword)) {
+                awards.add(keyword.replace(/\b\w/g, character => character.toUpperCase()));
+            }
         }
     }
-    return Array.from(awards);
+    return [...awards];
 }

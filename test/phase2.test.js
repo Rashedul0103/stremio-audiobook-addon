@@ -68,12 +68,13 @@ test('empty aggregate results use a short negative cache TTL', async () => {
     aggregator.providers.google.search = async () => [];
     aggregator.providers.openlib.search = async () => [];
     aggregator.providers.librivox.search = async () => [];
+    aggregator.providers.internetarchive.search = async () => [];
 
     const query = 'unique-negative-cache-phase-two-query';
     const results = await aggregator.searchAndSynthesize(query, 0);
     assert.deepEqual(results, []);
 
-    const key = 'agg_search_' + query + '_0_default';
+    const key = 'agg_search_' + query + '_0_relevance_all_default';
     const expiresAt = catalogCache.getTtl(key);
     assert.ok(expiresAt);
     const remainingSeconds = (expiresAt - Date.now()) / 1000;

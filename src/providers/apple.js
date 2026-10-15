@@ -1,6 +1,8 @@
 import { BaseProvider } from './base.js';
 import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, metaCache } from '../services/cache.js';
+import { normalizeLanguage } from '../utils/language.js';
+import { extractAwards } from '../utils/genreMapper.js';
 
 export class AppleBooksProvider extends BaseProvider {
     constructor() { super('Apple Books'); }
@@ -62,6 +64,8 @@ export class AppleBooksProvider extends BaseProvider {
             poster: artwork,
             background: artwork,
             genres: item.primaryGenreName ? [item.primaryGenreName] : [],
+            language: normalizeLanguage(item.language || item.languageCode),
+            awards: extractAwards([item.collectionName, item.trackName, item.description]),
             year: item.releaseDate ? new Date(item.releaseDate).getFullYear() : null,
             series: null,
             externalIds: {}
