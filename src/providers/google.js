@@ -1,39 +1,44 @@
 import { BaseProvider } from './base.js';
 import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, metaCache } from '../services/cache.js';
+import { createHash } from 'node:crypto';
+
+export function getApiKeyCacheScope(apiKey = '') {
+    if (!apiKey) return 'default';
+    return createHash('sha256').update(String(apiKey)).digest('hex').slice(0, 16);
+}
 
 export class GoogleBooksProvider extends BaseProvider {
     constructor() {
         super('Google Books');
         this.baseUrl = 'https://www.googleapis.com/books/v1/volumes';
-        this.apiKey = '';
     }
 
-    setApiKey(key) {
-        this.apiKey = key ? String(key).trim() : '';
-    }
-
-    async _fetch(url) {
-        const cacheKey = 'gb:' + url + (this.apiKey ? ':custom_key' : '');
+    async _fetch(url, apiKey = '') {
+        const cacheKey = 'gb:' + url + ':' + getApiKeyCacheScope(apiKey);
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
-        const separator = url.includes('?') ? '&' : '?';
-        const finalUrl = this.apiKey ? (url + separator + 'key=' + this.apiKey) : url;
+        let finalUrl = url;
+        if (apiKey) {
+            const parsedUrl = new URL(url);
+            parsedUrl.searchParams.set('key', String(apiKey));
+            finalUrl = parsedUrl.toString();
+        }
 
         const data = await fetchWithRetry(finalUrl);
         if (data) catalogCache.set(cacheKey, data);
         return data;
     }
 
-    async search(query, skip = 0) {
+    async search(query, skip = 0, apiKey = '') {
         const url = this.baseUrl + '?q=' + encodeURIComponent(query) + '&maxResults=40&startIndex=' + skip;
-        const data = await this._fetch(url);
+        const data = await this._fetch(url, apiKey);
         if (!data || !data.items) return [];
 
         return data.items.map(this._mapItem.bind(this)).filter(Boolean);
     }
 
-    async getMeta(id) {
+    async getMeta(id, apiKey = '') {
         let url = null;
         if (id.startsWith('isbn:')) {
             url = this.baseUrl + '?q=isbn:' + id.substring(5);
@@ -43,10 +48,10 @@ export class GoogleBooksProvider extends BaseProvider {
             return null;
         }
 
-        const cacheKey = 'gb_meta_' + id + (this.apiKey ? ':custom' : '');
+        const cacheKey = 'gb_meta_' + id + ':' + getApiKeyCacheScope(apiKey);
         if (metaCache.has(cacheKey)) return metaCache.get(cacheKey);
 
-        const data = await this._fetch(url);
+        const data = await this._fetch(url, apiKey);
         if (!data) return null;
 
         const item = data.items ? data.items[0] : data;

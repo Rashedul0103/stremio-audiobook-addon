@@ -1,6 +1,6 @@
 import { AppleBooksProvider } from '../providers/apple.js';
 import { OpenLibraryProvider } from '../providers/openlib.js';
-import { GoogleBooksProvider } from '../providers/google.js';
+import { GoogleBooksProvider, getApiKeyCacheScope } from '../providers/google.js';
 import { AudnexusProvider } from '../providers/audnexus.js';
 import { LibriVoxProvider, InternetArchiveProvider } from '../providers/streams.js';
 import { generateWorkFingerprint, generateSlug, cleanNarrator } from '../utils/normalizer.js';
@@ -73,7 +73,7 @@ export class Aggregator {
             id: null, type: 'movie', title: '', poster: null, background: null,
             description: null, genres: [], authors: [], narrators: [], year: null,
             abridged: null, series: null, ratings: null, awards: [], streams: [],
-            externalIds: {}, isPublicDomain: false
+            externalIds: {}, sourceIds: [], rights: [], isPublicDomain: false
         };
 
         const providerPriority = { audnexus: 6, apple: 5, openlib: 4, google: 3, librivox: 2, ia: 1 };
@@ -90,7 +90,11 @@ export class Aggregator {
                 else if (item.externalIds?.asin) canonical.id = `asin:${item.externalIds.asin}`;
                 else if (item.id?.startsWith('olid:')) canonical.id = item.id;
                 else if (item.id?.startsWith('librivox:')) canonical.id = item.id;
+                else if (item.id?.startsWith('ia:')) canonical.id = item.id;
             }
+
+            if (item.id && !canonical.sourceIds.includes(item.id)) canonical.sourceIds.push(item.id);
+            if (item.rights) canonical.rights.push(...(Array.isArray(item.rights) ? item.rights : [item.rights]));
 
             if (item.externalIds) {
                 Object.assign(canonical.externalIds, item.externalIds);
@@ -119,8 +123,16 @@ export class Aggregator {
             if (item.awards?.length) {
                 canonical.awards = [...new Set([...canonical.awards, ...item.awards])];
             }
-            if (item.isPublicDomain) canonical.isPublicDomain = true;
+            // Rights are resolved conservatively after the canonical ID is selected.
         }
+
+        // Do not attribute Internet Archive rights to unrelated editions in the same work cluster.
+        canonical.isPublicDomain =
+            group.some(item => item.provider === 'librivox' && item.isPublicDomain === true) ||
+            (canonical.id?.startsWith('ia:') &&
+                group.some(item => item.provider === 'ia' && item.isPublicDomain === true));
+        canonical.sourceIds = [...new Set(canonical.sourceIds)];
+        canonical.rights = [...new Set(canonical.rights)];
 
         // Smart Narrator Preservation (Preserves original uppercase formatting)
         canonical.narrators = rawNarrators.length > 0 ? [...new Set(rawNarrators)] : ['Unknown'];
@@ -133,13 +145,13 @@ export class Aggregator {
         return canonical;
     }
 
-    async searchAndSynthesize(query, skip = 0) {
-        const cacheKey = `agg_search_${query}_${skip}`;
+    async searchAndSynthesize(query, skip = 0, googleApiKey = '') {
+        const cacheKey = `agg_search_${query}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
         const [appleRes, googleRes, openlibRes, librivoxRes] = await Promise.allSettled([
             this.providers.apple.search(query, skip),
-            this.providers.google.search(query, skip),
+            this.providers.google.search(query, skip, googleApiKey),
             this.providers.openlib.search(query, skip),
             this.providers.librivox.search(query, skip)
         ]);
@@ -183,8 +195,8 @@ export class Aggregator {
         return synthesized;
     }
 
-    async getMetaAndSynthesize(id) {
-        const cacheKey = `agg_meta_${id}`;
+    async getMetaAndSynthesize(id, googleApiKey = '') {
+        const cacheKey = `agg_meta_${id}_${getApiKeyCacheScope(googleApiKey)}`;
         if (metaCache.has(cacheKey)) return metaCache.get(cacheKey);
 
         let results = [];
@@ -192,7 +204,7 @@ export class Aggregator {
         if (id.startsWith('isbn:')) {
             const isbn = id.substring(5);
             const [googleRes, openlibRes] = await Promise.allSettled([
-                this.providers.google.getMeta(id),
+                this.providers.google.getMeta(id, googleApiKey),
                 this.providers.openlib.getMeta(id)
             ]);
             if (googleRes.status === 'fulfilled' && googleRes.value) results.push(googleRes.value);
@@ -219,9 +231,12 @@ export class Aggregator {
                     if (appleRes?.length > 0) results.push(appleRes[0]);
                 }
             }
+        } else if (id.startsWith('ia:')) {
+            const res = await this.providers.internetarchive.getMeta(id);
+            if (res) results.push(res);
         } else if (id.startsWith('slug:')) {
             const cleanQuery = id.substring(5).replace(/-/g, ' ');
-            const searchResults = await this.searchAndSynthesize(cleanQuery, 0);
+            const searchResults = await this.searchAndSynthesize(cleanQuery, 0, googleApiKey);
             if (searchResults.length > 0) {
                 metaCache.set(cacheKey, searchResults[0]);
                 return searchResults[0];
@@ -239,7 +254,7 @@ export class Aggregator {
     /**
      * Resolves playable streams with automatic LibriVox fallback for ISBN/Slug items
      */
-    async getStreams(id) {
+    async getStreams(id, googleApiKey = '') {
         let streams = [];
 
         if (id.startsWith('librivox:')) {
@@ -250,7 +265,7 @@ export class Aggregator {
             if (res) streams.push(...res);
         } else {
             // For isbn:, asin:, or slug:, resolve metadata and query LibriVox by title
-            const meta = await this.getMetaAndSynthesize(id);
+            const meta = await this.getMetaAndSynthesize(id, googleApiKey);
             if (meta?.title) {
                 const query = `${meta.title} ${meta.authors?.[0] || ''}`.trim();
                 const lvBooks = await this.providers.librivox.search(query, 0);

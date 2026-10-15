@@ -4,7 +4,8 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test",
+    "check": "node --check src/index.js && node --check src/stremio/configureHtml.js && node --check src/providers/google.js && node --check src/services/aggregator.js && node --check src/providers/streams.js && node --check src/stremio/router.js && node --check src/utils/fetchWithRetry.js && node --check test/phase1.test.js",
     "start": "node src/index.js"
   },
   "keywords": [],

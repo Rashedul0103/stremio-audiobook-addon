@@ -2,6 +2,26 @@ import { BaseProvider } from './base.js';
 import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, streamCache, metaCache } from '../services/cache.js';
 
+export function isExplicitlyPublicDomain(record = {}) {
+    const values = [
+        record.licenseurl,
+        record.license,
+        record.rights,
+        record.copyright_status
+    ].flat(Infinity).filter(value => typeof value === 'string').map(value => value.trim()).filter(Boolean);
+
+    const explicitPublicDomainLicense = values.some(value =>
+        /creativecommons\.org\/publicdomain\/(?:zero|mark)\/1\.0\/?(?:[?#].*)?$/i.test(value) ||
+        /creativecommons\.org\/licenses\/zero\/1\.0\/?(?:[?#].*)?$/i.test(value)
+    );
+    if (explicitPublicDomainLicense) return true;
+
+    return values.some(value =>
+        /\bpublic[\s_-]*domain\b/i.test(value) &&
+        !/\bnot\b.{0,25}\bpublic[\s_-]*domain\b|\ball rights reserved\b/i.test(value)
+    );
+}
+
 export class LibriVoxProvider extends BaseProvider {
     constructor() { super('LibriVox'); }
 
@@ -84,7 +104,7 @@ export class InternetArchiveProvider extends BaseProvider {
         const cacheKey = `ia_search_${query}_${skip}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
-        const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(query)}+mediatype:audio&fl[]=identifier,title,creator,description,year&rows=50&start=${skip}&output=json`;
+        const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(query)}+mediatype:audio&fl[]=identifier,title,creator,description,year,licenseurl,rights,copyright_status&rows=50&start=${skip}&output=json`;
         const data = await fetchWithRetry(url);
         if (!data || !data.response || !data.response.docs) return [];
 
@@ -114,7 +134,8 @@ export class InternetArchiveProvider extends BaseProvider {
             background: null,
             genres: [],
             year: data.metadata.year ? parseInt(data.metadata.year, 10) : null,
-            isPublicDomain: true,
+            rights: data.metadata.rights || data.metadata.licenseurl || data.metadata.copyright_status || null,
+            isPublicDomain: isExplicitlyPublicDomain(data.metadata),
             externalIds: {}
         };
 
@@ -162,7 +183,8 @@ export class InternetArchiveProvider extends BaseProvider {
             background: null,
             genres: [],
             year: item.year ? parseInt(item.year, 10) : null,
-            isPublicDomain: true,
+            rights: item.rights || item.licenseurl || item.copyright_status || null,
+            isPublicDomain: isExplicitlyPublicDomain(item),
             externalIds: {}
         };
     }
