@@ -20,6 +20,8 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: npm ci
+      - name: Audit dependencies
+        run: npm audit --audit-level=low
       - name: Check JavaScript syntax
         run: npm run check
       - name: Run regression tests
