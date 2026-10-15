@@ -6,7 +6,7 @@ function escapeSearchPhrase(value) {
     return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').trim();
 }
 
-function parseDurationSeconds(value) {
+export function parseDurationSeconds(value) {
     if (value === null || value === undefined || value === '') return null;
     if (typeof value === 'number' && Number.isFinite(value)) return value > 0 ? Math.round(value) : null;
 
