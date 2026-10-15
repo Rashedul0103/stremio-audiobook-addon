@@ -5,6 +5,7 @@ import { AudnexusProvider } from '../providers/audnexus.js';
 import { LibriVoxProvider, InternetArchiveProvider } from '../providers/streams.js';
 import { generateWorkFingerprint, generateSlug, cleanNarrator, cleanAuthor, cleanTitle } from '../utils/normalizer.js';
 import { normalizeGenres } from '../utils/genreMapper.js';
+import { normalizeLanguage } from '../utils/language.js';
 import { catalogCache, metaCache } from './cache.js';
 
 function authorMatches(query, authors = []) {
@@ -224,7 +225,7 @@ export class Aggregator {
 
     async searchAndSynthesize(query, skip = 0, googleApiKey = '', options = {}) {
         const orderBy = options.orderBy === 'newest' ? 'newest' : 'relevance';
-        const cacheKey = `agg_search_${query}_${skip}_${orderBy}_${getApiKeyCacheScope(googleApiKey)}`;
+        const cacheKey = `agg_search_${query}_${skip}_${orderBy}_${normalizeLanguage(options.language) || 'all'}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
         const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
@@ -252,7 +253,7 @@ export class Aggregator {
     }
 
     async searchByGenre(genre, skip = 0, googleApiKey = '', language = '') {
-        const cacheKey = `agg_genre_${genre}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
+        const cacheKey = `agg_genre_${genre}_${skip}_${normalizeLanguage(language) || 'all'}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
         const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
@@ -275,7 +276,7 @@ export class Aggregator {
     }
 
     async searchByNarrator(narrator, skip = 0, googleApiKey = '', language = '') {
-        const cacheKey = `agg_narrator_${narrator}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
+        const cacheKey = `agg_narrator_${narrator}_${skip}_${normalizeLanguage(language) || 'all'}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
         const candidates = await this.searchAndSynthesize(narrator, skip, googleApiKey, { language });
         const expected = cleanNarrator(narrator);
@@ -288,7 +289,7 @@ export class Aggregator {
     }
 
     async searchByAuthor(author, skip = 0, googleApiKey = '', language = '') {
-        const cacheKey = `agg_author_${author}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
+        const cacheKey = `agg_author_${author}_${skip}_${normalizeLanguage(language) || 'all'}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
         const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
