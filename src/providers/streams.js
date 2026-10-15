@@ -2,6 +2,29 @@ import { BaseProvider } from './base.js';
 import { fetchWithRetry } from '../utils/fetchWithRetry.js';
 import { catalogCache, streamCache, metaCache } from '../services/cache.js';
 
+function escapeSearchPhrase(value) {
+    return String(value ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"').trim();
+}
+
+function parseDurationSeconds(value) {
+    if (value === null || value === undefined || value === '') return null;
+    if (typeof value === 'number' && Number.isFinite(value)) return value > 0 ? Math.round(value) : null;
+
+    const raw = String(value).trim();
+    if (!raw) return null;
+    if (/^\d+(?:\.\d+)?$/.test(raw)) {
+        const seconds = Number(raw);
+        return Number.isFinite(seconds) && seconds > 0 ? Math.round(seconds) : null;
+    }
+
+    if (!/^\d{1,3}:\d{2}(?::\d{2})?$/.test(raw)) return null;
+    const parts = raw.split(':').map(Number);
+    const seconds = parts.length === 3
+        ? parts[0] * 3600 + parts[1] * 60 + parts[2]
+        : parts[0] * 60 + parts[1];
+    return seconds > 0 ? seconds : null;
+}
+
 export function isExplicitlyPublicDomain(record = {}) {
     const values = [
         record.licenseurl,
@@ -26,15 +49,34 @@ export class LibriVoxProvider extends BaseProvider {
     constructor() { super('LibriVox'); }
 
     async search(query, skip = 0) {
-        const cacheKey = `lv_search_${query}_${skip}`;
+        return this.searchByTitle(query, skip);
+    }
+
+    async searchByTitle(title, skip = 0) {
+        return this._searchByField('title', title, skip);
+    }
+
+    async searchByAuthor(author, skip = 0) {
+        // Use a separate author query. LibriVox has recently had server errors for
+        // combined title+author filters, so do not send both fields together.
+        return this._searchByField('author', author, skip);
+    }
+
+    async _searchByField(field, query, skip = 0) {
+        const cacheKey = `lv_${field}_${query}_${skip}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
-        const url = `https://librivox.org/api/feed/audiobooks?title=${encodeURIComponent(query)}&format=json&limit=50&offset=${skip}`;
-        const data = await fetchWithRetry(url);
-        if (!data || !data.books) return [];
+        const url = new URL('https://librivox.org/api/feed/audiobooks');
+        url.searchParams.set(field, query);
+        url.searchParams.set('format', 'json');
+        url.searchParams.set('limit', '50');
+        url.searchParams.set('offset', String(skip));
+
+        const data = await fetchWithRetry(url.toString());
+        if (!data || !Array.isArray(data.books)) return [];
 
         const results = data.books.map(this._mapBook.bind(this)).filter(Boolean);
-        catalogCache.set(cacheKey, results);
+        catalogCache.set(cacheKey, results, results.length === 0 ? 60 : 0);
         return results;
     }
 
@@ -67,7 +109,7 @@ export class LibriVoxProvider extends BaseProvider {
             url: sec.listen_url,
             name: 'LibriVox',
             title: `Ch. ${sec.section_number}: ${sec.title || `Part ${sec.section_number}`}`,
-            duration: sec.playtime ? parseInt(sec.playtime, 10) : null
+            duration: parseDurationSeconds(sec.playtime)
         })).filter(s => s.url);
 
         streamCache.set(cacheKey, streams);
@@ -104,13 +146,29 @@ export class InternetArchiveProvider extends BaseProvider {
         const cacheKey = `ia_search_${query}_${skip}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
-        const url = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(query)}+mediatype:audio&fl[]=identifier,title,creator,description,year,licenseurl,rights,copyright_status&rows=50&start=${skip}&output=json`;
-        const data = await fetchWithRetry(url);
-        if (!data || !data.response || !data.response.docs) return [];
+        const url = new URL('https://archive.org/advancedsearch.php');
+        url.searchParams.set('q', `${query} AND mediatype:audio`);
+        for (const field of ['identifier', 'title', 'creator', 'description', 'year', 'licenseurl', 'rights', 'copyright_status']) {
+            url.searchParams.append('fl[]', field);
+        }
+        url.searchParams.set('rows', '50');
+        url.searchParams.set('start', String(skip));
+        url.searchParams.set('output', 'json');
+
+        const data = await fetchWithRetry(url.toString());
+        if (!data || !data.response || !Array.isArray(data.response.docs)) return [];
 
         const results = data.response.docs.map(this._mapItem.bind(this)).filter(Boolean);
-        catalogCache.set(cacheKey, results);
+        catalogCache.set(cacheKey, results, results.length === 0 ? 60 : 0);
         return results;
+    }
+
+    async searchByTitle(title, skip = 0) {
+        return this.search(`title:"${escapeSearchPhrase(title)}"`, skip);
+    }
+
+    async searchByAuthor(author, skip = 0) {
+        return this.search(`creator:"${escapeSearchPhrase(author)}"`, skip);
     }
 
     async getMeta(id) {
