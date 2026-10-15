@@ -1,0 +1,66 @@
+name: Import LibriVox catalogue into D1
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: librivox-d1-import
+  cancel-in-progress: false
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout addon
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Fetch public LibriVox catalogue repository
+        run: git clone --depth 1 https://github.com/Rashedul0103/librivox_audiobooks.git "$RUNNER_TEMP/librivox_audiobooks"
+
+      - name: Build D1 import batches
+        run: node scripts/build-librivox-d1-import.mjs "$RUNNER_TEMP/librivox_audiobooks" "$RUNNER_TEMP/librivox-d1-import"
+
+      - name: Install Wrangler
+        run: npm install --global wrangler@4
+
+      - name: Apply D1 schema
+        run: wrangler d1 migrations apply librivox-audiobooks --remote --config worker/wrangler.jsonc
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Import generated SQL batches
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=( "$RUNNER_TEMP/librivox-d1-import"/*.sql )
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No SQL batches were generated."
+            exit 1
+          fi
+          for file in "${files[@]}"; do
+            echo "Importing $(basename "$file")"
+            wrangler d1 execute librivox-audiobooks --remote --config worker/wrangler.jsonc --file "$file"
+          done
+          echo "Import complete."
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Print import summary
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/librivox-d1-import/summary.json" ]; then
+            cat "$RUNNER_TEMP/librivox-d1-import/summary.json"
+          else
+            echo "Import summary was not produced."
+          fi
