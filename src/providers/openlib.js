@@ -90,7 +90,7 @@ export class OpenLibraryProvider extends BaseProvider {
             poster: coverId,
             background: coverId,
             genres: work.subjects ? work.subjects.slice(0, 10) : [],
-            language: normalizeLanguage(work.languages?.map(language => language.key || language)),
+            language: normalizeLanguage(Array.isArray(work.languages) ? work.languages.map(language => language.key || language) : []),
             awards: extractAwards([...(work.subjects || []), work.title, work.description?.value || work.description]),
             year: null,
             series: work.series ? work.series.map(s => ({ name: s })) : [],
