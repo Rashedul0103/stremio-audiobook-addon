@@ -78,7 +78,7 @@ export class GoogleBooksProvider extends BaseProvider {
     }
 
     async getByNarrator() { return []; }
-    async getByGenre(genre, skip = 0) { return this.search('subject:' + genre, skip); }
+    async getByGenre(genre, skip = 0, apiKey = '') { return this.search('subject:' + genre, skip, apiKey); }
     async getSeries() { return []; }
     async getStreams() { return []; }
 
