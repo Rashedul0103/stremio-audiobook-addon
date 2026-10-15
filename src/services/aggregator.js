@@ -227,18 +227,20 @@ export class Aggregator {
         const cacheKey = `agg_search_${query}_${skip}_${orderBy}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
-        const [appleRes, googleRes, openlibRes, librivoxRes] = await Promise.allSettled([
+        const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
             this.providers.apple.search(query, skip),
-            this.providers.google.search(query, skip, googleApiKey, { orderBy }),
-            this.providers.openlib.search(query, skip),
-            this.providers.librivox.search(query, skip)
+            this.providers.google.search(query, skip, googleApiKey, { orderBy, language: options.language }),
+            this.providers.openlib.search(query, skip, options.language),
+            this.providers.librivox.search(query, skip),
+            this.providers.internetarchive.search(query, skip, options.language)
         ]);
 
         const allResults = [
             ...(appleRes.status === 'fulfilled' ? appleRes.value : []),
             ...(googleRes.status === 'fulfilled' ? googleRes.value : []),
             ...(openlibRes.status === 'fulfilled' ? openlibRes.value : []),
-            ...(librivoxRes.status === 'fulfilled' ? librivoxRes.value : [])
+            ...(librivoxRes.status === 'fulfilled' ? librivoxRes.value : []),
+            ...(iaRes.status === 'fulfilled' ? iaRes.value : [])
         ];
 
         let synthesized = this._synthesizeItems(allResults);
@@ -249,16 +251,16 @@ export class Aggregator {
         return synthesized;
     }
 
-    async searchByGenre(genre, skip = 0, googleApiKey = '') {
+    async searchByGenre(genre, skip = 0, googleApiKey = '', language = '') {
         const cacheKey = `agg_genre_${genre}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
         const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
             this.providers.apple.search(genre, skip),
-            this.providers.google.getByGenre(genre, skip, googleApiKey),
-            this.providers.openlib.getByGenre(genre, skip),
+            this.providers.google.getByGenre(genre, skip, googleApiKey, language),
+            this.providers.openlib.getByGenre(genre, skip, language),
             this.providers.librivox.searchByGenre(genre, skip),
-            this.providers.internetarchive.searchByGenre(genre, skip)
+            this.providers.internetarchive.searchByGenre(genre, skip, language)
         ]);
         const raw = [
             ...(appleRes.status === 'fulfilled' ? appleRes.value : []),
@@ -272,10 +274,10 @@ export class Aggregator {
         return synthesized;
     }
 
-    async searchByNarrator(narrator, skip = 0, googleApiKey = '') {
+    async searchByNarrator(narrator, skip = 0, googleApiKey = '', language = '') {
         const cacheKey = `agg_narrator_${narrator}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
-        const candidates = await this.searchAndSynthesize(narrator, skip, googleApiKey);
+        const candidates = await this.searchAndSynthesize(narrator, skip, googleApiKey, { language });
         const expected = cleanNarrator(narrator);
         const results = candidates.filter(item =>
             expected !== 'unknown' &&
@@ -285,16 +287,16 @@ export class Aggregator {
         return results;
     }
 
-    async searchByAuthor(author, skip = 0, googleApiKey = '') {
+    async searchByAuthor(author, skip = 0, googleApiKey = '', language = '') {
         const cacheKey = `agg_author_${author}_${skip}_${getApiKeyCacheScope(googleApiKey)}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
 
         const [appleRes, googleRes, openlibRes, librivoxRes, iaRes] = await Promise.allSettled([
             this.providers.apple.search(author, skip),
-            this.providers.google.searchByAuthor(author, skip, googleApiKey),
-            this.providers.openlib.searchByAuthor(author, skip),
+            this.providers.google.searchByAuthor(author, skip, googleApiKey, language),
+            this.providers.openlib.searchByAuthor(author, skip, language),
             this.providers.librivox.searchByAuthor(author, skip),
-            this.providers.internetarchive.searchByAuthor(author, skip)
+            this.providers.internetarchive.searchByAuthor(author, skip, language)
         ]);
         const results = [
             ...(appleRes.status === 'fulfilled' ? appleRes.value : []),
