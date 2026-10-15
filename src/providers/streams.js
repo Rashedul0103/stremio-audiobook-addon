@@ -64,6 +64,10 @@ export class LibriVoxProvider extends BaseProvider {
         return this._searchByField('author', author, skip);
     }
 
+    async searchByGenre(genre, skip = 0) {
+        return this._searchByField('genre', genre, skip);
+    }
+
     async _searchByField(field, query, skip = 0) {
         const cacheKey = `lv_${field}_${query}_${skip}`;
         if (catalogCache.has(cacheKey)) return catalogCache.get(cacheKey);
@@ -174,6 +178,10 @@ export class InternetArchiveProvider extends BaseProvider {
 
     async searchByAuthor(author, skip = 0) {
         return this.search(`creator:"${escapeSearchPhrase(author)}"`, skip);
+    }
+
+    async searchByGenre(genre, skip = 0) {
+        return this.search(`subject:"${escapeSearchPhrase(genre)}"`, skip);
     }
 
     async getMeta(id) {
