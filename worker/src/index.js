@@ -188,7 +188,23 @@ function bookQuery(catalogId, extras) {
 
 async function getCatalog(db, route, extras) {
   if (route.type !== "movie") return json({ metas: [] });
+
+  const allowedCatalogs = new Set([
+    "librivox_all",
+    "librivox_author",
+    "librivox_genre",
+    "librivox_search",
+    ...LANGUAGES.map((language) => "librivox_lang_" + language.slug),
+  ]);
+  if (!allowedCatalogs.has(route.id)) return json({ metas: [] });
+
+  // Required filters should never accidentally turn a filtered catalogue into
+  // an unfiltered dump of the entire library.
+  if (route.id === "librivox_author" && !extras.author) return json({ metas: [] });
+  if (route.id === "librivox_genre" && !extras.genre) return json({ metas: [] });
+  if (route.id === "librivox_search" && !extras.search) return json({ metas: [] });
   if (!db) return json({ error: "Catalogue database is not configured yet." }, 503);
+
   const { sql, bind } = bookQuery(route.id, extras);
   const result = await db.prepare(sql).bind(...bind).all();
   return json({ metas: (result.results || []).map(toMetaPreview) });
