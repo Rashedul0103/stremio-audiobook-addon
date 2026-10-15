@@ -247,10 +247,11 @@ function bookToSqlStatements(book) {
 
   const statements = [makeInsert("[]")];
   for (let i = 0; i < chunks.length; i++) {
-    const operation = i === 0 ? "=" : "||";
+    const assignment = i === 0
+      ? "chapters_json = " + sqlText(chunks[i])
+      : "chapters_json = chapters_json || " + sqlText(chunks[i]);
     statements.push(
-      "UPDATE books SET chapters_json = chapters_json " + operation + " " +
-      sqlText(chunks[i]) + " WHERE id = " + sqlText(book.id) + ";"
+      "UPDATE books SET " + assignment + " WHERE id = " + sqlText(book.id) + ";"
     );
   }
   return statements;
