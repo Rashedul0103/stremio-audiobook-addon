@@ -81,21 +81,32 @@ function sqlValue(value) {
   return value === null || value === undefined ? "NULL" : sqlText(value);
 }
 
-function chapterTitle(label, title) {
-  const separator = label.indexOf(" · ");
-  if (separator >= 0) return label.slice(separator + 3).trim() || label;
-  const prefix = title + " — ";
-  if (label.startsWith(prefix)) return label.slice(prefix.length).trim() || label;
-  return label || title;
+function parseBookLabel(label) {
+  const normalized = String(label || "").trim();
+  const separator = normalized.indexOf(" — ");
+  if (separator < 0) {
+    const descriptorSeparator = normalized.indexOf(" · ");
+    return {
+      title: (descriptorSeparator < 0 ? normalized : normalized.slice(0, descriptorSeparator)).trim() || "Unknown title",
+      author: "Unknown author",
+      chapter: descriptorSeparator < 0 ? "" : normalized.slice(descriptorSeparator + 3).trim(),
+    };
+  }
+
+  const title = normalized.slice(0, separator).trim() || "Unknown title";
+  const remainder = normalized.slice(separator + 3);
+  const descriptorSeparator = remainder.indexOf(" · ");
+  const author = (descriptorSeparator < 0 ? remainder : remainder.slice(0, descriptorSeparator)).trim() || "Unknown author";
+
+  return {
+    title,
+    author,
+    chapter: descriptorSeparator < 0 ? "" : remainder.slice(descriptorSeparator + 3).trim(),
+  };
 }
 
-function authorFromLabel(label, title) {
-  const prefix = title + " — ";
-  if (!label.startsWith(prefix)) return "Unknown author";
-  const rest = label.slice(prefix.length);
-  const separator = rest.indexOf(" · ");
-  const author = (separator < 0 ? rest : rest.slice(0, separator)).trim();
-  return author || "Unknown author";
+function chapterTitle(label, parsed) {
+  return parsed.chapter || label || parsed.title;
 }
 
 function writeBatches(prefix, statements, maxBytes = 300_000, maxStatements = 250) {
@@ -144,46 +155,58 @@ for (const file of walkM3u(genreRoot)) {
 }
 console.log("Genre-mapped tracks:", genresByUrl.size);
 
-console.log("Grouping title playlists into book records...");
+console.log("Grouping title playlists into book records by each EXTINF book label...");
 const books = new Map();
 const titleFiles = walkM3u(titleRoot);
+
 for (const file of titleFiles) {
-  const relativePath = path.relative(titleRoot, file).split(path.sep).join("/");
   const rows = parseM3u(file);
   if (!rows.length) continue;
-  const title = rows.find((row) => row.groupTitle)?.groupTitle || path.basename(file, ".m3u").replace(/-/g, " ");
-  const idSeed = relativePath.replace(/\.m3u$/i, "");
+
+  // Some by-title source files are alphabetic buckets (for example "1.m3u")
+  // containing thousands of different books. The file/group-title is a browse
+  // bucket, not necessarily a book title. Recover the actual book and author
+  // from every EXTINF label instead of grouping the entire file into one row.
   for (const row of rows) {
     const language = languageByUrl.get(row.url);
     if (!language) continue;
-    const id = "lvb-" + createHash("sha256").update(idSeed + "|" + language).digest("hex").slice(0, 20);
+
+    const parsed = parseBookLabel(row.label);
+    const title = parsed.title || "Unknown title";
+    const author = parsed.author || "Unknown author";
+    const identity = [genreSlug(title), genreSlug(author), language].join("|");
+    const id = "lvb-" + createHash("sha256").update(identity).digest("hex").slice(0, 20);
+
     if (!books.has(id)) {
       books.set(id, {
         id,
         title,
-        author: authorFromLabel(row.label, title),
+        author,
         language,
         genres: new Set(),
         chapters: [],
-        path: relativePath,
+        chapterUrls: new Set(),
       });
     }
+
     const book = books.get(id);
     for (const genre of (genresByUrl.get(row.url) || [])) book.genres.add(genre);
-    book.chapters.push({
-      title: chapterTitle(row.label, title),
-      url: row.url,
-      duration: row.duration,
-    });
-    if (book.author === "Unknown author") {
-      const recovered = authorFromLabel(row.label, title);
-      if (recovered !== "Unknown author") book.author = recovered;
+
+    // A book can appear in both an alphabetic bucket and a per-title source
+    // playlist. Deduplicate audio URLs so chapter playback isn't repeated.
+    if (!book.chapterUrls.has(row.url)) {
+      book.chapterUrls.add(row.url);
+      book.chapters.push({
+        title: chapterTitle(row.label, parsed),
+        url: row.url,
+        duration: row.duration,
+      });
     }
   }
 }
 
 const normalizedBooks = [...books.values()].map((book) => {
-  const genres = [...book.genres].sort((a, b) => a.localeCompare(b));
+  const genres = book.genres.size ? [...book.genres].sort((a, b) => a.localeCompare(b)) : ["Unclassified"];
   book.chapters.sort((a, b) =>
     a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" }) ||
     a.url.localeCompare(b.url)
