@@ -211,17 +211,53 @@ if (!normalizedBooks.length) throw new Error("No books were built; refusing to g
 
 fs.rmSync(outputDir, { recursive: true, force: true });
 fs.mkdirSync(outputDir, { recursive: true });
-fs.writeFileSync(path.join(outputDir, "00-clear.sql"), "DELETE FROM books;\nDELETE FROM genres;\n", "utf8");
+fs.writeFileSync(path.join(outputDir, "00-clear.sql"), "DELETE FROM genres;\n", "utf8");
 
-const bookSql = normalizedBooks.map((book) =>
-  "INSERT OR REPLACE INTO books (id,title,author,language,genres_json,description,poster,year,chapter_count,chapters_json,search_text) VALUES (" +
-  [
-    sqlText(book.id), sqlText(book.title), sqlText(book.author), sqlText(book.language),
-    sqlText(book.genres_json), sqlText(book.description), sqlValue(book.poster),
-    book.year === null ? "NULL" : String(book.year), String(book.chapter_count),
-    sqlText(book.chapters_json), sqlText(book.search_text),
-  ].join(",") + ");"
-);
+function bookToSqlStatements(book) {
+  const makeInsert = (chaptersJson) =>
+    "INSERT OR REPLACE INTO books (id,title,author,language,genres_json,description,poster,year,chapter_count,chapters_json,search_text) VALUES (" +
+    [
+      sqlText(book.id), sqlText(book.title), sqlText(book.author), sqlText(book.language),
+      sqlText(book.genres_json), sqlText(book.description), sqlValue(book.poster),
+      book.year === null ? "NULL" : String(book.year), String(book.chapter_count),
+      sqlText(chaptersJson), sqlText(book.search_text),
+    ].join(",") + ");";
+
+  const directInsert = makeInsert(book.chapters_json);
+  if (Buffer.byteLength(directInsert, "utf8") < 90_000) return [directInsert];
+
+  if (Buffer.byteLength(book.chapters_json, "utf8") > 1_750_000) {
+    throw new Error("One title exceeds D1's safe 2 MB row limit: " + book.title + " (" + book.chapter_count + " tracks). Split this collection before importing.");
+  }
+
+  // D1 limits a single SQL statement to 100 KB. Store large chapter arrays in
+  // smaller string chunks, appending them to the same row in order.
+  const chunks = [];
+  let chunk = "";
+  for (const character of book.chapters_json) {
+    const candidate = chunk + character;
+    if (chunk && Buffer.byteLength(sqlText(candidate), "utf8") > 70_000) {
+      chunks.push(chunk);
+      chunk = character;
+    } else {
+      chunk = candidate;
+    }
+  }
+  if (chunk) chunks.push(chunk);
+
+  const statements = [makeInsert("[]")];
+  for (let i = 0; i < chunks.length; i++) {
+    const operation = i === 0 ? "=" : "||";
+    statements.push(
+      "UPDATE books SET chapters_json = chapters_json " + operation + " " +
+      sqlText(chunks[i]) + " WHERE id = " + sqlText(book.id) + ";"
+    );
+  }
+  return statements;
+}
+
+const bookSql = normalizedBooks.flatMap(bookToSqlStatements);
+
 const uniqueGenres = new Map();
 for (const book of normalizedBooks) {
   for (const genre of book.genres) uniqueGenres.set(genreSlug(genre), genre);
