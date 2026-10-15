@@ -5,6 +5,25 @@ import { aggregator } from '../services/aggregator.js';
 import { filterByLanguage } from '../utils/language.js';
 
 const builder = new addonBuilder(manifest);
+function searchItems(query, skip, config, options = {}) {
+    return aggregator.searchAndSynthesize(query, skip, config.google_books_api_key, {
+        ...options,
+        language: config.language
+    });
+}
+
+function searchAuthor(author, skip, config) {
+    return aggregator.searchByAuthor(author, skip, config.google_books_api_key, config.language);
+}
+
+function searchNarrator(narrator, skip, config) {
+    return aggregator.searchByNarrator(narrator, skip, config.google_books_api_key, config.language);
+}
+
+function searchGenre(genre, skip, config) {
+    return aggregator.searchByGenre(genre, skip, config.google_books_api_key, config.language);
+}
+
 
 function recordText(item) {
     return [item?.title, item?.description, ...(item?.genres || []), ...(item?.awards || [])]
