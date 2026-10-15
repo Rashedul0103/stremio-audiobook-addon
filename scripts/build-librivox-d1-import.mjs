@@ -157,7 +157,14 @@ console.log("Genre-mapped tracks:", genresByUrl.size);
 
 console.log("Grouping title playlists into book records by each EXTINF book label...");
 const books = new Map();
-const titleFiles = walkM3u(titleRoot);
+const titleFiles = walkM3u(titleRoot).sort((a, b) => {
+  // Prefer nested, title-specific playlists over root-level alphabetic buckets.
+  // Otherwise the bucket's less-specific copy could claim a URL first.
+  const depthA = path.relative(titleRoot, a).split(path.sep).length;
+  const depthB = path.relative(titleRoot, b).split(path.sep).length;
+  return depthB - depthA || a.localeCompare(b);
+});
+const claimedTrackUrls = new Set();
 
 for (const file of titleFiles) {
   const rows = parseM3u(file);
@@ -169,7 +176,7 @@ for (const file of titleFiles) {
   // from every EXTINF label instead of grouping the entire file into one row.
   for (const row of rows) {
     const language = languageByUrl.get(row.url);
-    if (!language) continue;
+    if (!language || claimedTrackUrls.has(row.url)) continue;
 
     const parsed = parseBookLabel(row.label);
     const title = parsed.title || "Unknown title";
@@ -201,6 +208,7 @@ for (const file of titleFiles) {
         url: row.url,
         duration: row.duration,
       });
+      claimedTrackUrls.add(row.url);
     }
   }
 }
