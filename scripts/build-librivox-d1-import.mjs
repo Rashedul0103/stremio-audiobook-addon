@@ -251,7 +251,7 @@ for (const book of normalizedBooks) {
 const generationMaterial = [
   ...normalizedBooks.map((book) => "book:" + book.id).sort(),
   ...[...uniqueGenres.keys()].sort().map((slug) => "genre:" + slug),
-].join("\\n");
+].join("\n");
 const importGeneration = createHash("sha256").update(generationMaterial).digest("hex").slice(0, 24);
 
 fs.rmSync(outputDir, { recursive: true, force: true });
@@ -319,8 +319,8 @@ const genreBatches = writeBatches("20-genres-", genreSql, 150_000, 400);
 // If an earlier batch fails, the currently published catalogue is not pruned.
 fs.writeFileSync(
   path.join(outputDir, "99-prune-stale.sql"),
-  "DELETE FROM books WHERE import_generation <> " + sqlText(importGeneration) + ";\\n" +
-  "DELETE FROM genres WHERE import_generation <> " + sqlText(importGeneration) + ";\\n",
+  "DELETE FROM books WHERE import_generation <> " + sqlText(importGeneration) + ";\n" +
+  "DELETE FROM genres WHERE import_generation <> " + sqlText(importGeneration) + ";\n",
   "utf8",
 );
 
