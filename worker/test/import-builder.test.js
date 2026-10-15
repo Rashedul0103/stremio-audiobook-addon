@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import { buildVerificationQuery, verifyWranglerPayload } from "../../scripts/verify-d1-import.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const builderPath = path.join(projectRoot, "scripts/build-librivox-d1-import.mjs");
@@ -151,4 +152,8 @@ test("D1 import builder groups tracks by title and language, retaining genre and
   assert.equal(db.prepare("SELECT slug FROM genres WHERE slug = ?").get("removed-genre"), undefined);
   assert.equal(db.prepare("SELECT COUNT(*) AS count FROM books WHERE import_generation <> ?")
     .get(summary.importGeneration).count, 0);
+
+  const remoteQueryRow = db.prepare(buildVerificationQuery(summary)).get();
+  const verification = verifyWranglerPayload(summary, [{ success: true, results: [remoteQueryRow] }]);
+  assert.equal(verification.ok, true, JSON.stringify(verification.mismatches));
 });
