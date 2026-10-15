@@ -1,11 +1,6 @@
 name: Deploy LibriVox Audiobook Worker
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "worker/**"
-      - ".github/workflows/deploy-cloudflare-worker.yml"
   workflow_dispatch:
 
 permissions:
