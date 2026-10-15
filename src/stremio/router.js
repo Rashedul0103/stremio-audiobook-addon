@@ -2,8 +2,26 @@ import pkg from 'stremio-addon-sdk';
 const { addonBuilder } = pkg;
 import { manifest } from './manifest.js';
 import { aggregator } from '../services/aggregator.js';
+import { filterByLanguage } from '../utils/language.js';
 
 const builder = new addonBuilder(manifest);
+
+function recordText(item) {
+    return [item?.title, item?.description, ...(item?.genres || []), ...(item?.awards || [])]
+        .filter(Boolean).join(' ').toLowerCase();
+}
+
+function hasBestsellerMention(item) {
+    return /\\b(best[ -]?seller|best selling)\\b/i.test(recordText(item));
+}
+
+function hasDramaEvidence(item) {
+    return /\\b(drama|radio play|audio drama|dramati[sz]ed)\\b/i.test(recordText(item));
+}
+
+function hasFullCastEvidence(item) {
+    return /\\b(full[ -]?cast|full company|ensemble cast)\\b/i.test(recordText(item));
+}
 
 // --- CATALOG HANDLER ---
 builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
@@ -21,14 +39,17 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
             results = await aggregator.searchByAuthor(config.pinned_author, skip, config.google_books_api_key);
         }
         else if (id === 'pinned_narrator' && config.pinned_narrator) {
-            results = await aggregator.searchAndSynthesize(config.pinned_narrator, skip, config.google_books_api_key);
+            results = await aggregator.searchByNarrator(config.pinned_narrator, skip, config.google_books_api_key);
+        }
+        else if (id === 'by_narrator' && extra?.narrator) {
+            results = await aggregator.searchByNarrator(extra.narrator, skip, config.google_books_api_key);
         }
         else if (extra?.search) {
             results = await aggregator.searchAndSynthesize(extra.search, skip, config.google_books_api_key);
         } 
         else if (id === 'genre') {
             const selectedGenre = extra?.genre || 'Science Fiction';
-            results = await aggregator.searchAndSynthesize('subject:' + selectedGenre, skip, config.google_books_api_key);
+            results = await aggregator.searchByGenre(selectedGenre, skip, config.google_books_api_key);
         }
         else if (id === 'free_public_domain') {
             const [lvRes, iaRes] = await Promise.allSettled([
@@ -49,32 +70,39 @@ builder.defineCatalogHandler(async ({ type, id, extra, config = {} }) => {
             results = await aggregator.searchAndSynthesize('short stories collection audiobook', skip, config.google_books_api_key);
         }
         else if (id === 'drama') {
-            results = await aggregator.searchAndSynthesize('drama radio play audiobook', skip, config.google_books_api_key);
+            results = (await aggregator.searchAndSynthesize('drama radio play audiobook', skip, config.google_books_api_key)).filter(hasDramaEvidence);
         }
         else if (id === 'full_cast') {
-            results = await aggregator.searchAndSynthesize('full cast dramatization audiobook', skip, config.google_books_api_key);
+            results = (await aggregator.searchAndSynthesize('full cast audiobook', skip, config.google_books_api_key)).filter(hasFullCastEvidence);
         }
-        else if (id === 'bestsellers' || id === 'trending') {
-            results = await aggregator.searchAndSynthesize('bestselling audiobooks', skip, config.google_books_api_key);
+        else if (id === 'bestsellers') {
+            // Source APIs don't provide a shared bestseller rank. Show only records
+            // whose own metadata explicitly calls them a bestseller.
+            results = (await aggregator.searchAndSynthesize('bestseller audiobook', skip, config.google_books_api_key)).filter(hasBestsellerMention);
+        }
+        else if (id === 'trending') {
+            results = await aggregator.searchAndSynthesize('audiobook', skip, config.google_books_api_key);
         }
         else if (id === 'new_releases') {
-            results = await aggregator.searchAndSynthesize('new release audiobooks', skip, config.google_books_api_key);
+            results = await aggregator.searchAndSynthesize('audiobook', skip, config.google_books_api_key, { orderBy: 'newest' });
         }
         else if (id === 'top_rated') {
-            results = await aggregator.searchAndSynthesize('highly rated audiobooks', skip, config.google_books_api_key);
+            results = (await aggregator.searchAndSynthesize('audiobook', skip, config.google_books_api_key))
+                .filter(item => Number.isFinite(item.ratings?.score) && item.ratings.score > 0 && item.ratings.count >= 10)
+                .sort((a, b) => b.ratings.score - a.ratings.score || b.ratings.count - a.ratings.count);
         }
         else if (id === 'award_winners') {
-            results = await aggregator.searchAndSynthesize('audie award winner audiobook', skip, config.google_books_api_key);
+            results = (await aggregator.searchAndSynthesize('audiobook award winner', skip, config.google_books_api_key))
+                .filter(item => Array.isArray(item.awards) && item.awards.length > 0);
         }
         else if (id === 'series') {
-            results = await aggregator.searchAndSynthesize('popular book series', skip, config.google_books_api_key);
-        }
-        else if (id === 'by_narrator') {
-            results = await aggregator.searchAndSynthesize('popular audiobook narrators', skip, config.google_books_api_key);
+            results = (await aggregator.searchAndSynthesize('book series audiobook', skip, config.google_books_api_key))
+                .filter(item => item.series && item.series.name);
         } else {
             results = await aggregator.searchAndSynthesize('audiobook', skip, config.google_books_api_key);
         }
 
+        results = filterByLanguage(results, config.language);
         if (config.hide_abridged) results = results.filter(r => r.abridged !== true);
         if (config.public_domain_only) results = results.filter(r => r.isPublicDomain === true);
         if (config.hide_explicit) {
@@ -118,6 +146,7 @@ builder.defineMetaHandler(async ({ type, id, config = {} }) => {
     try {
         const meta = await aggregator.getMetaAndSynthesize(id, config.google_books_api_key);
         if (!meta) return { meta: null };
+        if (config.language && config.language !== 'all' && filterByLanguage([meta], config.language).length === 0) return { meta: null };
         if (config.hide_abridged && meta.abridged === true) return { meta: null };
         if (config.public_domain_only && meta.isPublicDomain !== true) return { meta: null };
 
@@ -184,6 +213,10 @@ builder.defineMetaHandler(async ({ type, id, config = {} }) => {
 // --- STREAM HANDLER ---
 builder.defineStreamHandler(async ({ type, id, config = {} }) => {
     try {
+        if (config.language && config.language !== 'all') {
+            const meta = await aggregator.getMetaAndSynthesize(id, config.google_books_api_key);
+            if (!meta || filterByLanguage([meta], config.language).length === 0) return { streams: [] };
+        }
         let streams = await aggregator.getStreams(id, config.google_books_api_key);
         const playbackStyle = config.playback_style || 'both';
 
