@@ -155,6 +155,91 @@ for (const file of walkM3u(genreRoot)) {
 }
 console.log("Genre-mapped tracks:", genresByUrl.size);
 
+function normalizeMatchText(value) {
+  return String(value || "").normalize("NFKD")
+    .replace(/[\\u0300-\\u036f]/g, "")
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function apiAuthorName(record) {
+  const raw = record?.authors ?? record?.author ?? [];
+  const authors = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
+  return authors.map((author) => {
+    if (typeof author === "string") return author;
+    return [
+      author?.first_name,
+      author?.last_name,
+      author?.name,
+    ].filter(Boolean).join(" ").trim();
+  }).filter(Boolean).join(" ");
+}
+
+function extractApiBooks(payload) {
+  const root = payload?.books ?? payload?.book ?? payload;
+  if (Array.isArray(root)) return root;
+  if (root && Array.isArray(root.book)) return root.book;
+  if (root && typeof root === "object") {
+    const values = Object.values(root);
+    if (values.length && values.every((value) => value && typeof value === "object")) return values;
+  }
+  return [];
+}
+
+async function buildCoverLookup() {
+  const byTitleAndAuthor = new Map();
+  const coversByTitle = new Map();
+  const pageSize = 500;
+  const maxPages = 100;
+
+  for (let page = 0; page < maxPages; page++) {
+    const offset = page * pageSize;
+    const params = new URLSearchParams({
+      format: "json",
+      limit: String(pageSize),
+      offset: String(offset),
+      coverart: "1",
+      fields: "{id,title,authors,coverart_jpg,coverart_thumbnail}",
+    });
+    const response = await fetch("https://librivox.org/api/feed/audiobooks/?" + params.toString(), {
+      headers: { Accept: "application/json", "User-Agent": "LibriVox-Audiobook-Stremio-Addon/1.0" },
+      signal: AbortSignal.timeout(25000),
+    });
+    if (!response.ok) throw new Error("LibriVox cover API returned HTTP " + response.status);
+    const rows = extractApiBooks(await response.json());
+    if (!rows.length) break;
+
+    for (const record of rows) {
+      const titleKey = normalizeMatchText(record?.title);
+      const cover = [record?.coverart_thumbnail, record?.coverart_jpg]
+        .find((value) => typeof value === "string" && /^https?:\\/\\//i.test(value));
+      if (!titleKey || !cover) continue;
+
+      const authorKey = normalizeMatchText(apiAuthorName(record));
+      const pairKey = titleKey + "|" + authorKey;
+      if (authorKey && !byTitleAndAuthor.has(pairKey)) byTitleAndAuthor.set(pairKey, cover);
+      if (!coversByTitle.has(titleKey)) coversByTitle.set(titleKey, new Set());
+      coversByTitle.get(titleKey).add(cover);
+    }
+
+    if (rows.length < pageSize) break;
+    if (page + 1 < maxPages) await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+
+  const uniqueTitleCovers = new Map();
+  for (const [title, covers] of coversByTitle) {
+    if (covers.size === 1) uniqueTitleCovers.set(title, [...covers][0]);
+  }
+  console.log("LibriVox cover index:", byTitleAndAuthor.size, "title/author matches and", uniqueTitleCovers.size, "unambiguous title matches.");
+  return (title, author) => {
+    const titleKey = normalizeMatchText(title);
+    const authorKey = normalizeMatchText(author);
+    return byTitleAndAuthor.get(titleKey + "|" + authorKey) || uniqueTitleCovers.get(titleKey) || null;
+  };
+}
+
 console.log("Grouping title playlists into book records by each EXTINF book label...");
 const books = new Map();
 const titleFiles = walkM3u(titleRoot).sort((a, b) => {
@@ -213,6 +298,15 @@ for (const file of titleFiles) {
   }
 }
 
+let coverForBook = () => null;
+if (process.env.LIBRIVOX_ENRICH_COVERS === "1") {
+  try {
+    coverForBook = await buildCoverLookup();
+  } catch (error) {
+    console.warn("Cover enrichment was unavailable; continuing without external cover art:", error.message);
+  }
+}
+
 const normalizedBooks = [...books.values()].map((book) => {
   const genres = book.genres.size ? [...book.genres].sort((a, b) => a.localeCompare(b)) : ["Unclassified"];
   book.chapters.sort((a, b) =>
@@ -228,7 +322,7 @@ const normalizedBooks = [...books.values()].map((book) => {
     language: book.language,
     genres_json: JSON.stringify(genres),
     description,
-    poster: null,
+    poster: coverForBook(book.title, book.author),
     year: null,
     chapter_count: book.chapters.length,
     chapters_json: JSON.stringify(book.chapters),
