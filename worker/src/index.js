@@ -96,47 +96,170 @@ export function toMetaPreview(book) {
   };
 }
 
-function baseCatalogs(genres) {
+const AUDIO_TYPES = [
+  { id: "audio_drama", name: "Plays & Audio Drama" },
+  { id: "dramatic_readings", name: "Dramatic Readings" },
+  { id: "full_cast", name: "Full-Cast / Multi-Voice (identified)" },
+  { id: "short_stories", name: "Short Stories & Anthologies" },
+  { id: "poetry", name: "Poetry & Verse" },
+  { id: "children", name: "Children's Audiobooks" },
+  { id: "religion", name: "Religion & Scripture" },
+  { id: "nonfiction", name: "Nonfiction, Essays & Reference" },
+  { id: "fantasy_scifi", name: "Fantasy & Science Fiction" },
+  { id: "mystery_thrillers", name: "Mystery, Crime & Suspense" },
+];
+
+const TYPE_FILTERS = {
+  audio_drama: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%plays%' OR lower(value) LIKE '%drama%' OR lower(value) LIKE '%radio play%')",
+  dramatic_readings: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%dramatic reading%')",
+  full_cast: "(instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'full cast') > 0 OR instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'full-cast') > 0 OR instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'multi-cast') > 0 OR instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'multicast') > 0 OR instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'multiple readers') > 0)",
+  short_stories: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%short stor%' OR lower(value) LIKE '%antholog%')",
+  poetry: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%poetry%' OR lower(value) LIKE '%poem%' OR lower(value) LIKE '%verse%')",
+  children: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%children%' OR lower(value) LIKE '%young adult%')",
+  religion: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%religion%' OR lower(value) LIKE '%bible%' OR lower(value) LIKE '%scripture%' OR lower(value) LIKE '%christianity%')",
+  nonfiction: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%non fiction%' OR lower(value) LIKE '%non-fiction%' OR lower(value) LIKE '%reference%' OR lower(value) LIKE '%essays%')",
+  fantasy_scifi: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%fantasy fiction%' OR lower(value) LIKE '%science fiction%' OR lower(value) LIKE '%fantastic fiction%')",
+  mystery_thrillers: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%crime%' OR lower(value) LIKE '%mystery%' OR lower(value) LIKE '%detective%' OR lower(value) LIKE '%thriller%' OR lower(value) LIKE '%suspense%')",
+};
+
+function alphaCatalogId(start, end) {
+  return start === "OTHER" ? "librivox_alpha_other"
+    : start === "0" ? "librivox_alpha_0_9"
+    : "librivox_alpha_" + start.toLowerCase() + "_" + end.toLowerCase();
+}
+
+function buildAlphaCatalogs(initialRows) {
+  const counts = new Map();
+  for (const row of initialRows || []) {
+    const initial = String(row.initial || "").trim().toUpperCase();
+    const count = safeNumber(row.count, 0);
+    if (!count) continue;
+    if (/^[A-Z]$/.test(initial)) counts.set(initial, (counts.get(initial) || 0) + count);
+    else if (/^[0-9]$/.test(initial)) counts.set("#", (counts.get("#") || 0) + count);
+    else counts.set("OTHER", (counts.get("OTHER") || 0) + count);
+  }
+
+  const catalogs = [];
+  if (counts.get("#")) {
+    catalogs.push({ type: "movie", id: alphaCatalogId("0", "9"), name: "Books · 0–9", extra: [{ name: "skip", isRequired: false }] });
+  }
+
+  // Build contiguous, balanced letter ranges so every title beginning A–Z
+  // belongs to exactly one row. Large initial-letter groups can stand alone.
+  let start = null;
+  let end = null;
+  let total = 0;
+  const target = 1100;
+  const flush = () => {
+    if (start === null || total === 0) return;
+    catalogs.push({
+      type: "movie",
+      id: alphaCatalogId(start, end),
+      name: "Books · " + start + (start === end ? "" : "–" + end),
+      extra: [{ name: "skip", isRequired: false }],
+    });
+    start = null;
+    end = null;
+    total = 0;
+  };
+  for (let code = 65; code <= 90; code++) {
+    const letter = String.fromCharCode(code);
+    const count = counts.get(letter) || 0;
+    if (count && start === null) start = letter;
+    if (count) {
+      end = letter;
+      total += count;
+    }
+    if (total >= target) flush();
+  }
+  flush();
+
+  if (counts.get("OTHER")) {
+    catalogs.push({ type: "movie", id: alphaCatalogId("OTHER", "OTHER"), name: "Books · Other Titles", extra: [{ name: "skip", isRequired: false }] });
+  }
+  return catalogs;
+}
+
+function baseCatalogs(genres, initialRows) {
   const skip = { name: "skip", isRequired: false };
-  const search = { name: "search", isRequired: false };
-  const catalogs = [
-    { type: "movie", id: "librivox_all", name: "LibriVox · All Audiobooks", extra: [search, { name: "genre", isRequired: false, options: genres }, skip] },
-    { type: "movie", id: "librivox_author", name: "LibriVox · Search by Author", extra: [{ name: "author", isRequired: true }, skip] },
-    { type: "movie", id: "librivox_genre", name: "LibriVox · Browse by Genre", extra: [{ name: "genre", isRequired: false, options: genres }, skip] },
-    { type: "movie", id: "librivox_search", name: "LibriVox · Search Books", extra: [{ name: "search", isRequired: true }, skip] },
-  ];
+  const search = { name: "search", isRequired: true };
+  const catalogs = [];
+
+  // One row for each requested language. Nothing is removed from the database:
+  // these are views of the same complete imported set.
   for (const language of LANGUAGES) {
     catalogs.push({
       type: "movie",
       id: "librivox_lang_" + language.slug,
       name: "LibriVox · " + language.name,
-      extra: [search, skip],
+      extra: [{ name: "search", isRequired: false }, skip],
     });
   }
+
+  for (const type of AUDIO_TYPES) {
+    catalogs.push({
+      type: "movie",
+      id: "librivox_type_" + type.id,
+      name: "Type · " + type.name,
+      extra: [skip],
+    });
+  }
+
+  // Give every real imported genre its own named row. The title itself also
+  // retains all genre labels in its metadata, including multi-genre books.
+  for (const genre of genres) {
+    if (!genre?.name || !genre?.slug) continue;
+    catalogs.push({
+      type: "movie",
+      id: "librivox_genre_" + genre.slug,
+      name: "Genre · " + genre.name,
+      extra: [skip],
+    });
+  }
+
+  catalogs.push(...buildAlphaCatalogs(initialRows));
+  catalogs.push({
+    type: "movie",
+    id: "librivox_search",
+    name: "Search LibriVox Books",
+    extra: [search, skip],
+  });
   return catalogs;
 }
 
 export async function buildManifest(db) {
-  let genres = FALLBACK_GENRES;
+  let genres = FALLBACK_GENRES.map((name) => ({
+    name,
+    slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+  }));
+  let initialRows = [];
   if (db) {
     try {
-      const result = await db.prepare("SELECT name FROM genres ORDER BY name COLLATE NOCASE").all();
-      const names = (result.results || []).map((row) => row.name).filter(Boolean);
-      if (names.length) genres = names;
+      const result = await db.prepare("SELECT slug, name FROM genres ORDER BY name COLLATE NOCASE").all();
+      const rows = result.results || [];
+      if (rows.length) genres = rows.map((row) => ({ name: row.name, slug: row.slug })).filter((row) => row.name && row.slug);
     } catch {
       // Keep the manifest available while the database is being initialized.
+    }
+    try {
+      const result = await db.prepare(
+        "SELECT UPPER(SUBSTR(LTRIM(title), 1, 1)) AS initial, COUNT(*) AS count FROM books GROUP BY initial"
+      ).all();
+      initialRows = result.results || [];
+    } catch {
+      // Alphabetical rows are omitted only when the database cannot supply counts.
     }
   }
   return {
     id: "org.rashedul0103.librivox",
-    version: "1.0.1",
+    version: "1.1.0",
     name: "LibriVox Audiobooks",
-    description: "Browse LibriVox recordings by language, genre, author and book title.",
+    description: "Browse the complete LibriVox catalogue by language, genre, audio type and title range.",
     logo: FALLBACK_POSTER,
     resources: ["catalog", "meta", "stream"],
     types: ["movie"],
     idPrefixes: ["lvb-"],
-    catalogs: baseCatalogs(genres),
+    catalogs: baseCatalogs(genres, initialRows),
     behaviorHints: { configurable: false, configurationRequired: false },
   };
 }
