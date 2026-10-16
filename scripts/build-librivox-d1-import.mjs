@@ -109,6 +109,22 @@ function chapterTitle(label, parsed) {
   return parsed.chapter || label || parsed.title;
 }
 
+function readByName(label) {
+  const match = String(label || "").match(/\bRead by\s+(.+?)(?:\s+-\s+Duration\b|$)/i);
+  const reader = match?.[1]?.trim().replace(/\s+/g, " ");
+  return reader || null;
+}
+
+function chapterRecord(label, parsed, row) {
+  const reader = readByName(label);
+  return {
+    title: chapterTitle(label, parsed),
+    ...(reader ? { reader } : {}),
+    url: row.url,
+    duration: row.duration,
+  };
+}
+
 function writeBatches(prefix, statements, maxBytes = 300_000, maxStatements = 250) {
   let batch = [];
   let bytes = 0;
@@ -133,11 +149,15 @@ function writeBatches(prefix, statements, maxBytes = 300_000, maxStatements = 25
 
 console.log("Indexing the six language playlists...");
 const languageByUrl = new Map();
+const languageTrackByUrl = new Map();
 for (const [slug, language] of LANGUAGES) {
   const file = path.join(languageRoot, slug + ".m3u");
   if (!fs.existsSync(file)) throw new Error("Missing language playlist: " + file);
   for (const row of parseM3u(file)) {
-    if (!languageByUrl.has(row.url)) languageByUrl.set(row.url, language);
+    if (!languageByUrl.has(row.url)) {
+      languageByUrl.set(row.url, language);
+      languageTrackByUrl.set(row.url, { ...row, language });
+    }
   }
 }
 console.log("Language-mapped tracks:", languageByUrl.size);
@@ -288,15 +308,62 @@ for (const file of titleFiles) {
     // playlist. Deduplicate audio URLs so chapter playback isn't repeated.
     if (!book.chapterUrls.has(row.url)) {
       book.chapterUrls.add(row.url);
-      book.chapters.push({
-        title: chapterTitle(row.label, parsed),
-        url: row.url,
-        duration: row.duration,
-      });
+      book.chapters.push(chapterRecord(row.label, parsed, row));
       claimedTrackUrls.add(row.url);
     }
   }
 }
+
+// Recover any selected-language track missing from the by-title index. This
+// is intentionally a fallback rather than a silent omission: language playlists
+// are the source of truth for the six requested languages.
+const unindexedTracks = [...languageByUrl.keys()].filter((url) => !claimedTrackUrls.has(url));
+if (unindexedTracks.length) {
+  console.warn("Recovering", unindexedTracks.length, "selected-language tracks absent from the by-title index.");
+}
+for (const url of unindexedTracks) {
+  const row = languageTrackByUrl.get(url);
+  if (!row) throw new Error("Selected-language track has no recovery metadata: " + url);
+
+  const parsed = parseBookLabel(row.label);
+  let title = parsed.title;
+  if (!title || title === "Unknown title") {
+    try {
+      title = path.basename(new URL(url).pathname).replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").trim();
+    } catch {
+      title = "Uncatalogued audiobook track";
+    }
+  }
+  const author = parsed.author || "Unknown author";
+  const identity = [genreSlug(title), genreSlug(author), row.language].join("|");
+  const id = "lvb-" + createHash("sha256").update(identity).digest("hex").slice(0, 20);
+
+  if (!books.has(id)) {
+    books.set(id, {
+      id,
+      title,
+      author,
+      language: row.language,
+      genres: new Set(),
+      chapters: [],
+      chapterUrls: new Set(),
+    });
+  }
+  const book = books.get(id);
+  for (const genre of (genresByUrl.get(url) || [])) book.genres.add(genre);
+  if (!book.chapterUrls.has(url)) {
+    book.chapterUrls.add(url);
+    book.chapters.push(chapterRecord(row.label, parsed, row));
+  }
+  claimedTrackUrls.add(url);
+}
+
+const stillUnclaimed = [...languageByUrl.keys()].filter((url) => !claimedTrackUrls.has(url));
+if (stillUnclaimed.length) {
+  throw new Error("Refusing to import an incomplete catalogue: " + stillUnclaimed.length +
+    " selected-language track(s) remain unassigned.");
+}
+console.log("Completeness check passed:", claimedTrackUrls.size, "of", languageByUrl.size, "selected-language track URLs assigned.");
 
 let coverForBook = () => null;
 if (process.env.LIBRIVOX_ENRICH_COVERS === "1") {
