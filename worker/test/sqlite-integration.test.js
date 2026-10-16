@@ -108,6 +108,17 @@ function fixture() {
       { title: "Act 2", reader: "Reader Two", url: "https://archive.org/download/multivoice/act2.mp3", duration: 320 },
     ],
   });
+  seedBook(db, {
+    id: "lvb-fullcast-1",
+    title: "A Full Cast Audio Drama",
+    author: "Various",
+    language: "English",
+    genres: ["Plays Drama"],
+    chapters: [
+      { title: "Act 1", reader: "Group", url: "https://archive.org/download/fullcast/act1.mp3", duration: 300 },
+      { title: "Act 2", reader: "Group", url: "https://archive.org/download/fullcast/act2.mp3", duration: 320 },
+    ],
+  });
   return { DB: db, close: () => db.close() };
 }
 
@@ -135,9 +146,13 @@ test("real SQLite migration supports language, per-genre, audio-type, search and
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Z Multi Voice Play"]);
 
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_type_group_reading.json"), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).metas.map((book) => book.name), ["A Full Cast Audio Drama"]);
+
   response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_type_audio_drama.json"), env);
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Z Multi Voice Play"]);
+  assert.deepEqual(new Set((await response.json()).metas.map((book) => book.name)), new Set(["A Full Cast Audio Drama", "Z Multi Voice Play"]));
 
   response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_alpha_b_t/skip=1&limit=1.json"), env);
   assert.equal(response.status, 200);
@@ -167,6 +182,7 @@ test("real SQLite metadata and playback return only HTTP(S) chapter URLs", async
   const meta = (await response.json()).meta;
   assert.equal(meta.name, "Banshi");
   assert.match(meta.description, /Language: Bangla/);
+  assert.match(meta.description, /Genres: Poetry/);
   assert.deepEqual(meta.genres, ["Poetry"]);
 
   response = await worker.fetch(new Request("https://addon.test/stream/movie/lvb-bn-1.json"), env);
