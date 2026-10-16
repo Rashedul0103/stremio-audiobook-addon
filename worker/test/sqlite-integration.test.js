@@ -100,7 +100,7 @@ function fixture() {
   return { DB: db, close: () => db.close() };
 }
 
-test("real SQLite migration supports language, genre, author, search and pagination routes", async (t) => {
+test("real SQLite migration supports language, per-genre, audio-type, search and alphabetical routes", async (t) => {
   const env = fixture();
   t.after(() => env.close());
 
@@ -108,24 +108,19 @@ test("real SQLite migration supports language, genre, author, search and paginat
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi"]);
 
-  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_genre/genre=Poetry.json"), env);
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_genre_poetry.json"), env);
   assert.equal(response.status, 200);
   assert.deepEqual(new Set((await response.json()).metas.map((book) => book.name)), new Set(["Banshi", "Selected Ghazals"]));
 
-  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_author/author=Tagore.json"), env);
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_type_poetry.json"), env);
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi"]);
-
-  const injectedAuthor = encodeURIComponent("Tagore' OR 1=1 --");
-  response = await worker.fetch(new Request(`https://addon.test/catalog/movie/librivox_author/author=${injectedAuthor}.json`), env);
-  assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).metas, []);
+  assert.deepEqual(new Set((await response.json()).metas.map((book) => book.name)), new Set(["Banshi", "Selected Ghazals"]));
 
   response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_search/search=Secret%20Garden.json"), env);
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["The Secret Garden"]);
 
-  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_all/skip=1&limit=1.json"), env);
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_alpha_b_t/skip=1&limit=1.json"), env);
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Selected Ghazals"]);
 });
@@ -137,9 +132,11 @@ test("real SQLite manifest includes genres populated by the migration/import sch
   const response = await worker.fetch(new Request("https://addon.test/manifest.json"), env);
   assert.equal(response.status, 200);
   const manifest = await response.json();
-  const genreCatalog = manifest.catalogs.find((catalog) => catalog.id === "librivox_genre");
+  const genreCatalog = manifest.catalogs.find((catalog) => catalog.id === "librivox_genre_poetry");
   assert.ok(genreCatalog);
-  assert.ok(genreCatalog.extra.find((extra) => extra.name === "genre").options.includes("Poetry"));
+  assert.equal(genreCatalog.name, "Genre · Poetry");
+  assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_all"), false);
+  assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_author"), false);
 });
 
 test("real SQLite metadata and playback return only HTTP(S) chapter URLs", async (t) => {
@@ -173,11 +170,11 @@ test("HEAD responses have no body and error/health responses are not cached", as
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("Cache-Control"), "no-store");
 
-  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_all.json"), {});
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_alpha_b_t.json"), {});
   assert.equal(response.status, 503);
   assert.equal(response.headers.get("Cache-Control"), "no-store");
 
-  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_all.json", { method: "HEAD" }), {});
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_alpha_b_t.json", { method: "HEAD" }), {});
   assert.equal(response.status, 503);
   assert.equal(response.body, null);
   assert.equal(response.headers.get("Cache-Control"), "no-store");
