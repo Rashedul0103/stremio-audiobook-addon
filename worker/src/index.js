@@ -99,7 +99,8 @@ export function toMetaPreview(book) {
 const AUDIO_TYPES = [
   { id: "audio_drama", name: "Plays & Audio Drama" },
   { id: "dramatic_readings", name: "Dramatic Readings" },
-  { id: "multi_reader", name: "Multiple Readers / Multi-Voice" },
+  { id: "group_reading", name: "Group / Full-Cast Readings" },
+  { id: "multi_reader", name: "Multiple Identified Readers" },
   { id: "single_reader", name: "Single Identified Reader" },
   { id: "short_stories", name: "Short Stories & Anthologies" },
   { id: "poetry", name: "Poetry & Verse" },
@@ -113,8 +114,9 @@ const AUDIO_TYPES = [
 const TYPE_FILTERS = {
   audio_drama: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%plays%' OR lower(value) LIKE '%drama%' OR lower(value) LIKE '%radio play%')",
   dramatic_readings: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%dramatic reading%')",
-  multi_reader: "(SELECT COUNT(DISTINCT lower(trim(json_extract(reader_chapter.value, '$.reader'))) ) FROM json_each(books.chapters_json) AS reader_chapter WHERE json_extract(reader_chapter.value, '$.reader') IS NOT NULL AND trim(json_extract(reader_chapter.value, '$.reader')) <> '') >= 2",
-  single_reader: "(SELECT COUNT(DISTINCT lower(trim(json_extract(reader_chapter.value, '$.reader'))) ) FROM json_each(books.chapters_json) AS reader_chapter WHERE json_extract(reader_chapter.value, '$.reader') IS NOT NULL AND trim(json_extract(reader_chapter.value, '$.reader')) <> '') = 1",
+  group_reading: "EXISTS (SELECT 1 FROM json_each(books.chapters_json) AS reader_chapter WHERE lower(trim(json_extract(reader_chapter.value, '$.reader'))) = 'group')",
+  multi_reader: "(SELECT COUNT(DISTINCT lower(trim(json_extract(reader_chapter.value, '$.reader'))) ) FROM json_each(books.chapters_json) AS reader_chapter WHERE json_extract(reader_chapter.value, '$.reader') IS NOT NULL AND trim(json_extract(reader_chapter.value, '$.reader')) <> '' AND lower(trim(json_extract(reader_chapter.value, '$.reader'))) NOT IN ('unknown', 'group')) >= 2",
+  single_reader: "(SELECT COUNT(DISTINCT lower(trim(json_extract(reader_chapter.value, '$.reader'))) ) FROM json_each(books.chapters_json) AS reader_chapter WHERE json_extract(reader_chapter.value, '$.reader') IS NOT NULL AND trim(json_extract(reader_chapter.value, '$.reader')) <> '' AND lower(trim(json_extract(reader_chapter.value, '$.reader'))) NOT IN ('unknown', 'group')) = 1",
   short_stories: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%short stor%' OR lower(value) LIKE '%antholog%')",
   poetry: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%poetry%' OR lower(value) LIKE '%poem%' OR lower(value) LIKE '%verse%')",
   children: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%children%' OR lower(value) LIKE '%young adult%')",
@@ -306,7 +308,7 @@ function bookQuery(catalogId, extras) {
   }
 
   let genrePage = 1;
-  const genreMatch = catalogId.match(/^librivox_genre_([a-z0-9-]+)(?:_p(\\d+))?$/);
+  const genreMatch = catalogId.match(/^librivox_genre_([a-z0-9-]+)(?:_p(\d+))?$/);
   if (genreMatch) {
     const slug = genreMatch[1];
     genrePage = Math.max(1, safeNumber(genreMatch[2], 1));
@@ -355,7 +357,7 @@ function bookQuery(catalogId, extras) {
     "ORDER BY title COLLATE NOCASE, id",
     "LIMIT ? OFFSET ?",
   ].filter(Boolean).join(" ");
-  bind.push(limit, skip);
+  bind.push(limit, offset);
   return { sql, bind };
 }
 
@@ -363,7 +365,7 @@ async function getCatalog(db, route, extras) {
   if (route.type !== "movie") return json({ metas: [] });
 
   const lang = LANGUAGES.some((language) => "librivox_lang_" + language.slug === route.id);
-  const genre = /^librivox_genre_[a-z0-9-]+(?:_p\\d+)?$/.test(route.id);
+  const genre = /^librivox_genre_[a-z0-9-]+(?:_p\d+)?$/.test(route.id);
   const audioType = /^librivox_type_[a-z0-9_]+$/.test(route.id) &&
     Object.prototype.hasOwnProperty.call(TYPE_FILTERS, route.id.slice("librivox_type_".length));
   const alpha = /^librivox_alpha_(?:0_9|other|[a-z]_[a-z])$/.test(route.id);
