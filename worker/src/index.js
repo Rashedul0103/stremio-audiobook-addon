@@ -99,7 +99,8 @@ export function toMetaPreview(book) {
 const AUDIO_TYPES = [
   { id: "audio_drama", name: "Plays & Audio Drama" },
   { id: "dramatic_readings", name: "Dramatic Readings" },
-  { id: "full_cast", name: "Full-Cast / Multi-Voice (identified)" },
+  { id: "multi_reader", name: "Multiple Readers / Multi-Voice" },
+  { id: "single_reader", name: "Single Identified Reader" },
   { id: "short_stories", name: "Short Stories & Anthologies" },
   { id: "poetry", name: "Poetry & Verse" },
   { id: "children", name: "Children's Audiobooks" },
@@ -112,7 +113,8 @@ const AUDIO_TYPES = [
 const TYPE_FILTERS = {
   audio_drama: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%plays%' OR lower(value) LIKE '%drama%' OR lower(value) LIKE '%radio play%')",
   dramatic_readings: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%dramatic reading%')",
-  full_cast: "(instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'full cast') > 0 OR instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'full-cast') > 0 OR instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'multi-cast') > 0 OR instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'multicast') > 0 OR instr(lower(books.title || ' ' || books.description || ' ' || books.chapters_json), 'multiple readers') > 0)",
+  multi_reader: "(SELECT COUNT(DISTINCT lower(trim(json_extract(reader_chapter.value, '$.reader'))) ) FROM json_each(books.chapters_json) AS reader_chapter WHERE json_extract(reader_chapter.value, '$.reader') IS NOT NULL AND trim(json_extract(reader_chapter.value, '$.reader')) <> '') >= 2",
+  single_reader: "(SELECT COUNT(DISTINCT lower(trim(json_extract(reader_chapter.value, '$.reader'))) ) FROM json_each(books.chapters_json) AS reader_chapter WHERE json_extract(reader_chapter.value, '$.reader') IS NOT NULL AND trim(json_extract(reader_chapter.value, '$.reader')) <> '') = 1",
   short_stories: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%short stor%' OR lower(value) LIKE '%antholog%')",
   poetry: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%poetry%' OR lower(value) LIKE '%poem%' OR lower(value) LIKE '%verse%')",
   children: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%children%' OR lower(value) LIKE '%young adult%')",
