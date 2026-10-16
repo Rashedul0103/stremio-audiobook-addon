@@ -283,19 +283,44 @@ function bookQuery(catalogId, extras) {
     where.push("language = ?");
     bind.push(lang.name);
   }
-  if ((catalogId === "librivox_genre" || catalogId === "librivox_all") && extras.genre) {
-    where.push("EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) = lower(?))");
-    bind.push(extras.genre.slice(0, 100));
+
+  if (catalogId.startsWith("librivox_genre_")) {
+    const slug = catalogId.slice("librivox_genre_".length);
+    where.push(
+      "EXISTS (SELECT 1 FROM json_each(books.genres_json) AS genre_item " +
+      "JOIN genres AS g ON lower(g.name) = lower(genre_item.value) WHERE g.slug = ?)"
+    );
+    bind.push(slug);
   }
-  if (catalogId === "librivox_author" && extras.author) {
-    where.push("instr(lower(author), lower(?)) > 0");
-    bind.push(extras.author.slice(0, 160));
+
+  if (catalogId.startsWith("librivox_type_")) {
+    const typeId = catalogId.slice("librivox_type_".length);
+    if (TYPE_FILTERS[typeId]) where.push("(" + TYPE_FILTERS[typeId] + ")");
   }
+
+  if (catalogId.startsWith("librivox_alpha_")) {
+    const range = catalogId.slice("librivox_alpha_".length);
+    if (range === "0_9") {
+      where.push("UPPER(SUBSTR(LTRIM(title), 1, 1)) GLOB '[0-9]'");
+    } else if (range === "other") {
+      where.push("NOT (UPPER(SUBSTR(LTRIM(title), 1, 1)) BETWEEN 'A' AND 'Z') AND NOT (UPPER(SUBSTR(LTRIM(title), 1, 1)) GLOB '[0-9]')");
+    } else {
+      const match = range.match(/^([a-z])_([a-z])$/);
+      if (match) {
+        where.push("UPPER(SUBSTR(LTRIM(title), 1, 1)) BETWEEN ? AND ?");
+        bind.push(match[1].toUpperCase(), match[2].toUpperCase());
+      } else {
+        where.push("1 = 0");
+      }
+    }
+  }
+
   const searchTerm = extras.search;
-  if (searchTerm && catalogId !== "librivox_author") {
+  if (searchTerm) {
     where.push("instr(lower(search_text), lower(?)) > 0");
     bind.push(searchTerm.slice(0, 160));
   }
+
   const limit = Math.min(PAGE_SIZE, Math.max(1, safeNumber(extras.limit, PAGE_SIZE)));
   const skip = Math.min(1_000_000, safeNumber(extras.skip, 0));
   const sql = [
@@ -312,19 +337,16 @@ function bookQuery(catalogId, extras) {
 async function getCatalog(db, route, extras) {
   if (route.type !== "movie") return json({ metas: [] });
 
-  const allowedCatalogs = new Set([
-    "librivox_all",
-    "librivox_author",
-    "librivox_genre",
-    "librivox_search",
-    ...LANGUAGES.map((language) => "librivox_lang_" + language.slug),
-  ]);
-  if (!allowedCatalogs.has(route.id)) return json({ metas: [] });
+  const lang = LANGUAGES.some((language) => "librivox_lang_" + language.slug === route.id);
+  const genre = /^librivox_genre_[a-z0-9-]+$/.test(route.id);
+  const audioType = /^librivox_type_[a-z0-9_]+$/.test(route.id) &&
+    Object.prototype.hasOwnProperty.call(TYPE_FILTERS, route.id.slice("librivox_type_".length));
+  const alpha = /^librivox_alpha_(?:0_9|other|[a-z]_[a-z])$/.test(route.id);
+  const search = route.id === "librivox_search";
+  if (!lang && !genre && !audioType && !alpha && !search) return json({ metas: [] });
 
-  // Required filters should never accidentally turn a filtered catalogue into
-  // an unfiltered dump of the entire library.
-  if (route.id === "librivox_author" && !extras.author) return json({ metas: [] });
-  if (route.id === "librivox_search" && !extras.search) return json({ metas: [] });
+  // Search is a filter-only row and must never return the whole library by accident.
+  if (search && !extras.search) return json({ metas: [] });
   if (!db) return json({ error: "Catalogue database is not configured yet." }, 503);
 
   const { sql, bind } = bookQuery(route.id, extras);
