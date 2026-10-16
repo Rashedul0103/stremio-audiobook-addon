@@ -87,6 +87,7 @@ export function toMetaPreview(book) {
     description: [
       book.language ? "Language: " + book.language : "",
       author.length ? "Author: " + author.join(", ") : "",
+      genres.length ? "Genres: " + genres.join(", ") : "Genres: Unclassified",
       chapterCount ? "Audio tracks/chapters: " + chapterCount : "",
     ].filter(Boolean).join("\n"),
     genres,
@@ -112,8 +113,8 @@ const AUDIO_TYPES = [
 ];
 
 const TYPE_FILTERS = {
-  audio_drama: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%plays%' OR lower(value) LIKE '%drama%' OR lower(value) LIKE '%radio play%')",
-  dramatic_readings: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%dramatic reading%')",
+  audio_drama: "(EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%plays%' OR lower(value) LIKE '%drama%' OR lower(value) LIKE '%radio play%') OR lower(title) LIKE '%radio play%' OR lower(title) LIKE '%audio drama%')",
+  dramatic_readings: "(EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%dramatic reading%') OR lower(title) LIKE '%dramatic reading%' OR lower(title) LIKE '%dramatized reading%' OR lower(title) LIKE '%dramatised reading%')",
   group_reading: "EXISTS (SELECT 1 FROM json_each(books.chapters_json) AS reader_chapter WHERE lower(trim(json_extract(reader_chapter.value, '$.reader'))) = 'group')",
   multi_reader: "(SELECT COUNT(DISTINCT lower(trim(json_extract(reader_chapter.value, '$.reader'))) ) FROM json_each(books.chapters_json) AS reader_chapter WHERE json_extract(reader_chapter.value, '$.reader') IS NOT NULL AND trim(json_extract(reader_chapter.value, '$.reader')) <> '' AND lower(trim(json_extract(reader_chapter.value, '$.reader'))) NOT IN ('unknown', 'group')) >= 2",
   single_reader: "(SELECT COUNT(DISTINCT lower(trim(json_extract(reader_chapter.value, '$.reader'))) ) FROM json_each(books.chapters_json) AS reader_chapter WHERE json_extract(reader_chapter.value, '$.reader') IS NOT NULL AND trim(json_extract(reader_chapter.value, '$.reader')) <> '' AND lower(trim(json_extract(reader_chapter.value, '$.reader'))) NOT IN ('unknown', 'group')) = 1",
@@ -394,6 +395,7 @@ async function getMeta(db, route) {
     "",
     "Language: " + book.language,
     "Author: " + (book.author || "Unknown author"),
+    "Genres: " + (genres.length ? genres.join(", ") : "Unclassified"),
     "Audio tracks/chapters: " + safeNumber(book.chapter_count, 0),
   ].filter((line, index, array) => line || (index > 0 && array[index - 1])).join("\n");
   return json({
