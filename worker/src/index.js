@@ -129,7 +129,7 @@ export async function buildManifest(db) {
   }
   return {
     id: "org.rashedul0103.librivox",
-    version: "1.0.0",
+    version: "1.0.1",
     name: "LibriVox Audiobooks",
     description: "Browse LibriVox recordings by language, genre, author and book title.",
     logo: FALLBACK_POSTER,
