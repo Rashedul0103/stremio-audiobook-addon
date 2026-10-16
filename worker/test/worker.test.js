@@ -102,6 +102,9 @@ test("manifest advertises six language catalogues and independent genre/author f
   const genre = manifest.catalogs.find((catalog) => catalog.id === "librivox_genre");
   assert.ok(genre.extra.some((extra) => extra.name === "genre"));
   assert.ok(genre.extra.find((extra) => extra.name === "genre").options.includes("Poetry"));
+  assert.equal(genre.extra.find((extra) => extra.name === "genre").isRequired, false);
+  const all = manifest.catalogs.find((catalog) => catalog.id === "librivox_all");
+  assert.ok(all.extra.find((extra) => extra.name === "genre").options.includes("Poetry"));
   const author = manifest.catalogs.find((catalog) => catalog.id === "librivox_author");
   assert.ok(author.extra.some((extra) => extra.name === "author"));
 });
@@ -138,6 +141,14 @@ test("catalogue routes independently filter by language, genre, author and title
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi", "Selected Ghazals"]);
 
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_all/genre=Poetry.json"), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi", "Selected Ghazals"]);
+
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_genre.json"), env);
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).metas.length, 3);
+
   response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_author/author=Tagore.json"), env);
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi"]);
@@ -147,10 +158,9 @@ test("catalogue routes independently filter by language, genre, author and title
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["The Secret Garden"]);
 });
 
-test("required filters and unknown catalogue IDs never dump the full library", async () => {
+test("search-only catalogs and unknown catalogue IDs never dump the full library", async () => {
   const env = { DB: new FakeD1() };
   for (const path of [
-    "/catalog/movie/librivox_genre.json",
     "/catalog/movie/librivox_author.json",
     "/catalog/movie/librivox_search.json",
     "/catalog/movie/not_a_catalogue.json",
