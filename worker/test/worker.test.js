@@ -46,8 +46,19 @@ class FakeD1 {
       args: [],
       bind(...args) { this.args = args; return this; },
       async all() {
-        if (this.sql.includes("SELECT name FROM genres")) {
-          return { results: db.genres.map((name) => ({ name })) };
+        if (this.sql.includes("SELECT slug, name FROM genres")) {
+          return { results: db.genres.map((name) => ({
+            name,
+            slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+          })) };
+        }
+        if (this.sql.includes("AS initial")) {
+          const groups = new Map();
+          for (const book of db.books) {
+            const initial = String(book.title || "").trim().charAt(0).toUpperCase();
+            groups.set(initial, (groups.get(initial) || 0) + 1);
+          }
+          return { results: [...groups].map(([initial, count]) => ({ initial, count })) };
         }
         if (!this.sql.includes("FROM books")) return { results: [] };
         let rows = [...db.books];
@@ -56,9 +67,24 @@ class FakeD1 {
           const language = this.args[argIndex++];
           rows = rows.filter((book) => book.language === language);
         }
-        if (this.sql.includes("EXISTS (SELECT 1 FROM json_each(books.genres_json)")) {
+        if (this.sql.includes("JOIN genres AS g ON lower(g.name)")) {
+          const slug = String(this.args[argIndex++] || "").toLowerCase();
+          rows = rows.filter((book) => JSON.parse(book.genres_json).some((item) =>
+            item.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") === slug));
+        } else if (this.sql.includes("EXISTS (SELECT 1 FROM json_each(books.genres_json)")) {
           const genre = String(this.args[argIndex++] || "").toLowerCase();
           rows = rows.filter((book) => JSON.parse(book.genres_json).some((item) => item.toLowerCase() === genre));
+        }
+        if (this.sql.includes("SUBSTR(LTRIM(title), 1, 1)) BETWEEN ? AND ?")) {
+          const first = String(this.args[argIndex++] || "").toUpperCase();
+          const last = String(this.args[argIndex++] || "").toUpperCase();
+          rows = rows.filter((book) => {
+            const initial = String(book.title || "").trim().charAt(0).toUpperCase();
+            return initial >= first && initial <= last;
+          });
+        }
+        if (this.sql.includes("SUBSTR(LTRIM(title), 1, 1)) GLOB '[0-9]'")) {
+          rows = rows.filter((book) => /^[0-9]/.test(String(book.title || "").trim()));
         }
         if (this.sql.includes("instr(lower(author), lower(?))")) {
           const author = String(this.args[argIndex++] || "").toLowerCase();
@@ -93,20 +119,19 @@ test("parses route-style extras and URL query parameters", () => {
   assert.equal(extras.search, "space travel");
 });
 
-test("manifest advertises six language catalogues and independent genre/author filters", async () => {
+test("manifest advertises language, audio-type, per-genre and alphabetical catalogue rows", async () => {
   const manifest = await buildManifest(new FakeD1());
   assert.equal(manifest.name, "LibriVox Audiobooks");
   for (const language of ["english", "bangla", "hindi", "urdu", "arabic", "turkish"]) {
     assert.ok(manifest.catalogs.some((catalog) => catalog.id === "librivox_lang_" + language));
   }
-  const genre = manifest.catalogs.find((catalog) => catalog.id === "librivox_genre");
-  assert.ok(genre.extra.some((extra) => extra.name === "genre"));
-  assert.ok(genre.extra.find((extra) => extra.name === "genre").options.includes("Poetry"));
-  assert.equal(genre.extra.find((extra) => extra.name === "genre").isRequired, false);
-  const all = manifest.catalogs.find((catalog) => catalog.id === "librivox_all");
-  assert.ok(all.extra.find((extra) => extra.name === "genre").options.includes("Poetry"));
-  const author = manifest.catalogs.find((catalog) => catalog.id === "librivox_author");
-  assert.ok(author.extra.some((extra) => extra.name === "author"));
+  const genre = manifest.catalogs.find((catalog) => catalog.id === "librivox_genre_poetry");
+  assert.equal(genre.name, "Genre · Poetry");
+  assert.ok(manifest.catalogs.some((catalog) => catalog.id === "librivox_type_audio_drama"));
+  assert.ok(manifest.catalogs.some((catalog) => catalog.id.startsWith("librivox_alpha_")));
+  assert.ok(manifest.catalogs.some((catalog) => catalog.id === "librivox_search"));
+  assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_all"), false);
+  assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_author"), false);
 });
 
 test("meta previews include language, author, and genre metadata", () => {
@@ -130,28 +155,20 @@ test("manifest route works without a database and includes CORS headers", async 
   assert.equal(body.id, "org.rashedul0103.librivox");
 });
 
-test("catalogue routes independently filter by language, genre, author and title search", async () => {
+test("catalogue routes independently filter by language, genre, alphabetical range and title search", async () => {
   const env = { DB: new FakeD1() };
 
   let response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_lang_bangla.json"), env);
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi"]);
 
-  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_genre/genre=Poetry.json"), env);
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_genre_poetry.json"), env);
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi", "Selected Ghazals"]);
 
-  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_all/genre=Poetry.json"), env);
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_alpha_b_t.json"), env);
   assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi", "Selected Ghazals"]);
-
-  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_genre.json"), env);
-  assert.equal(response.status, 200);
-  assert.equal((await response.json()).metas.length, 3);
-
-  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_author/author=Tagore.json"), env);
-  assert.equal(response.status, 200);
-  assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi"]);
+  assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Banshi", "Selected Ghazals", "The Secret Garden"]);
 
   response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_search/search=Secret%20Garden.json"), env);
   assert.equal(response.status, 200);
@@ -161,7 +178,6 @@ test("catalogue routes independently filter by language, genre, author and title
 test("search-only catalogs and unknown catalogue IDs never dump the full library", async () => {
   const env = { DB: new FakeD1() };
   for (const path of [
-    "/catalog/movie/librivox_author.json",
     "/catalog/movie/librivox_search.json",
     "/catalog/movie/not_a_catalogue.json",
   ]) {
@@ -189,7 +205,7 @@ test("book metadata and chapter URLs are returned for playback", async () => {
 });
 
 test("catalogue route reports an unconfigured database instead of pretending to be empty", async () => {
-  const response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_all.json"), {});
+  const response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_alpha_a_c.json"), {});
   assert.equal(response.status, 503);
   assert.match((await response.json()).error, /database is not configured/i);
 });
