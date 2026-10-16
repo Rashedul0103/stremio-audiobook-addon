@@ -192,7 +192,7 @@ async function buildCoverLookup() {
   const byTitleAndAuthor = new Map();
   const coversByTitle = new Map();
   const pageSize = 500;
-  const maxPages = 100;
+  const maxPages = 60;
 
   for (let page = 0; page < maxPages; page++) {
     const offset = page * pageSize;
@@ -214,7 +214,7 @@ async function buildCoverLookup() {
     for (const record of rows) {
       const titleKey = normalizeMatchText(record?.title);
       const cover = [record?.coverart_thumbnail, record?.coverart_jpg]
-        .find((value) => typeof value === "string" && /^https?:\\/\\//i.test(value));
+        .find((value) => typeof value === "string" && (value.startsWith("https://") || value.startsWith("http://")));
       if (!titleKey || !cover) continue;
 
       const authorKey = normalizeMatchText(apiAuthorName(record));
@@ -225,7 +225,7 @@ async function buildCoverLookup() {
     }
 
     if (rows.length < pageSize) break;
-    if (page + 1 < maxPages) await new Promise((resolve) => setTimeout(resolve, 350));
+    if (page + 1 < maxPages) await new Promise((resolve) => setTimeout(resolve, 3000));
   }
 
   const uniqueTitleCovers = new Map();
