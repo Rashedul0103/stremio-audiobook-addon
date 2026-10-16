@@ -46,6 +46,19 @@ class FakeD1 {
       args: [],
       bind(...args) { this.args = args; return this; },
       async all() {
+        if (this.sql.includes("COUNT(DISTINCT genre_map.book_id) AS count")) {
+          const counts = new Map();
+          for (const book of db.books) {
+            for (const name of JSON.parse(book.genres_json)) {
+              counts.set(name, (counts.get(name) || 0) + 1);
+            }
+          }
+          return { results: [...counts].map(([name, count]) => ({
+            name,
+            slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+            count,
+          })) };
+        }
         if (this.sql.includes("SELECT slug, name FROM genres")) {
           return { results: db.genres.map((name) => ({
             name,
@@ -132,6 +145,47 @@ test("manifest advertises language, audio-type, per-genre and alphabetical catal
   assert.ok(manifest.catalogs.some((catalog) => catalog.id === "librivox_search"));
   assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_all"), false);
   assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_author"), false);
+});
+
+test("large genres are split into labeled pages with no missing books", async () => {
+  const manyBooks = Array.from({ length: 205 }, (_, index) => ({
+    id: "lvb-poetry-" + String(index).padStart(3, "0"),
+    title: "Poetry Book " + String(index).padStart(3, "0"),
+    author: "Test Author",
+    language: "English",
+    genres_json: '["Poetry"]',
+    description: "Test volume",
+    poster: null,
+    year: null,
+    chapter_count: 1,
+    chapters_json: JSON.stringify([{
+      title: "Track 1",
+      url: "https://archive.org/download/test/track-" + index + ".mp3",
+      duration: 60,
+    }]),
+    search_text: "poetry book test author english",
+  }));
+  const env = { DB: new FakeD1(manyBooks) };
+  const manifest = await buildManifest(env.DB);
+  const shelves = manifest.catalogs.filter((catalog) => catalog.id.startsWith("librivox_genre_poetry"));
+  assert.equal(shelves.length, 3);
+  assert.deepEqual(shelves.map((catalog) => catalog.name), [
+    "Genre · Poetry (1/3)",
+    "Genre · Poetry (2/3)",
+    "Genre · Poetry (3/3)",
+  ]);
+
+  const pageNames = [];
+  for (const page of [1, 2, 3]) {
+    const id = page === 1 ? "librivox_genre_poetry" : "librivox_genre_poetry_p" + page;
+    const response = await worker.fetch(new Request("https://addon.test/catalog/movie/" + id + ".json"), env);
+    assert.equal(response.status, 200);
+    const metas = (await response.json()).metas;
+    pageNames.push(...metas.map((book) => book.name));
+    assert.equal(metas.length, page < 3 ? 100 : 5);
+  }
+  assert.equal(new Set(pageNames).size, 205);
+  assert.equal(pageNames.length, 205);
 });
 
 test("meta previews include language, author, and genre metadata", () => {
