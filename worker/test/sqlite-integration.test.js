@@ -97,6 +97,17 @@ function fixture() {
     genres: ["Poetry", "Classics"],
     chapters: [{ title: "Ghazal 1", url: "https://archive.org/download/ghazals/one.mp3", duration: 75 }],
   });
+  seedBook(db, {
+    id: "lvb-multivoice-1",
+    title: "Z Multi Voice Play",
+    author: "Various",
+    language: "English",
+    genres: ["Plays Drama"],
+    chapters: [
+      { title: "Act 1", reader: "Reader One", url: "https://archive.org/download/multivoice/act1.mp3", duration: 300 },
+      { title: "Act 2", reader: "Reader Two", url: "https://archive.org/download/multivoice/act2.mp3", duration: 320 },
+    ],
+  });
   return { DB: db, close: () => db.close() };
 }
 
@@ -119,6 +130,14 @@ test("real SQLite migration supports language, per-genre, audio-type, search and
   response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_search/search=Secret%20Garden.json"), env);
   assert.equal(response.status, 200);
   assert.deepEqual((await response.json()).metas.map((book) => book.name), ["The Secret Garden"]);
+
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_type_multi_reader.json"), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Z Multi Voice Play"]);
+
+  response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_type_audio_drama.json"), env);
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).metas.map((book) => book.name), ["Z Multi Voice Play"]);
 
   response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_alpha_b_t/skip=1&limit=1.json"), env);
   assert.equal(response.status, 200);
