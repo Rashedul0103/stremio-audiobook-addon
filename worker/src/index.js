@@ -100,9 +100,9 @@ function baseCatalogs(genres) {
   const skip = { name: "skip", isRequired: false };
   const search = { name: "search", isRequired: false };
   const catalogs = [
-    { type: "movie", id: "librivox_all", name: "LibriVox · All Audiobooks", extra: [search, skip] },
+    { type: "movie", id: "librivox_all", name: "LibriVox · All Audiobooks", extra: [search, { name: "genre", isRequired: false, options: genres }, skip] },
     { type: "movie", id: "librivox_author", name: "LibriVox · Search by Author", extra: [{ name: "author", isRequired: true }, skip] },
-    { type: "movie", id: "librivox_genre", name: "LibriVox · Browse by Genre", extra: [{ name: "genre", isRequired: true, options: genres }, skip] },
+    { type: "movie", id: "librivox_genre", name: "LibriVox · Browse by Genre", extra: [{ name: "genre", isRequired: false, options: genres }, skip] },
     { type: "movie", id: "librivox_search", name: "LibriVox · Search Books", extra: [{ name: "search", isRequired: true }, skip] },
   ];
   for (const language of LANGUAGES) {
@@ -160,7 +160,7 @@ function bookQuery(catalogId, extras) {
     where.push("language = ?");
     bind.push(lang.name);
   }
-  if (catalogId === "librivox_genre" && extras.genre) {
+  if ((catalogId === "librivox_genre" || catalogId === "librivox_all") && extras.genre) {
     where.push("EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) = lower(?))");
     bind.push(extras.genre.slice(0, 100));
   }
@@ -201,7 +201,6 @@ async function getCatalog(db, route, extras) {
   // Required filters should never accidentally turn a filtered catalogue into
   // an unfiltered dump of the entire library.
   if (route.id === "librivox_author" && !extras.author) return json({ metas: [] });
-  if (route.id === "librivox_genre" && !extras.genre) return json({ metas: [] });
   if (route.id === "librivox_search" && !extras.search) return json({ metas: [] });
   if (!db) return json({ error: "Catalogue database is not configured yet." }, 503);
 
