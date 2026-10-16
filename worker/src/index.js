@@ -211,12 +211,19 @@ function baseCatalogs(genres, initialRows) {
   // retains all genre labels in its metadata, including multi-genre books.
   for (const genre of genres) {
     if (!genre?.name || !genre?.slug) continue;
-    catalogs.push({
-      type: "movie",
-      id: "librivox_genre_" + genre.slug,
-      name: "Genre · " + genre.name,
-      extra: [skip],
-    });
+    // Split large genres into separate 100-book shelves so every page has a
+    // clear genre label and clients do not need to paginate one enormous row.
+    const bookCount = safeNumber(genre.count, 0);
+    const pageCount = Math.max(1, Math.ceil(bookCount / PAGE_SIZE));
+    for (let page = 1; page <= pageCount; page++) {
+      const paged = pageCount > 1;
+      catalogs.push({
+        type: "movie",
+        id: "librivox_genre_" + genre.slug + (paged ? "_p" + page : ""),
+        name: "Genre · " + genre.name + (paged ? " (" + page + "/" + pageCount + ")" : ""),
+        extra: [],
+      });
+    }
   }
 
   catalogs.push(...buildAlphaCatalogs(initialRows));
@@ -233,13 +240,25 @@ export async function buildManifest(db) {
   let genres = FALLBACK_GENRES.map((name) => ({
     name,
     slug: name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""),
+    count: 0,
   }));
   let initialRows = [];
   if (db) {
     try {
-      const result = await db.prepare("SELECT slug, name FROM genres ORDER BY name COLLATE NOCASE").all();
+      const result = await db.prepare(
+        "SELECT g.slug, g.name, COUNT(DISTINCT genre_map.book_id) AS count " +
+        "FROM genres AS g " +
+        "LEFT JOIN (SELECT b.id AS book_id, genre_item.value AS genre_name " +
+        "FROM books AS b, json_each(b.genres_json) AS genre_item) AS genre_map " +
+        "ON lower(genre_map.genre_name) = lower(g.name) " +
+        "GROUP BY g.slug, g.name ORDER BY g.name COLLATE NOCASE"
+      ).all();
       const rows = result.results || [];
-      if (rows.length) genres = rows.map((row) => ({ name: row.name, slug: row.slug })).filter((row) => row.name && row.slug);
+      if (rows.length) genres = rows.map((row) => ({
+        name: row.name,
+        slug: row.slug,
+        count: safeNumber(row.count, 0),
+      })).filter((row) => row.name && row.slug);
     } catch {
       // Keep the manifest available while the database is being initialized.
     }
@@ -286,8 +305,11 @@ function bookQuery(catalogId, extras) {
     bind.push(lang.name);
   }
 
-  if (catalogId.startsWith("librivox_genre_")) {
-    const slug = catalogId.slice("librivox_genre_".length);
+  let genrePage = 1;
+  const genreMatch = catalogId.match(/^librivox_genre_([a-z0-9-]+)(?:_p(\\d+))?$/);
+  if (genreMatch) {
+    const slug = genreMatch[1];
+    genrePage = Math.max(1, safeNumber(genreMatch[2], 1));
     where.push(
       "EXISTS (SELECT 1 FROM json_each(books.genres_json) AS genre_item " +
       "JOIN genres AS g ON lower(g.name) = lower(genre_item.value) WHERE g.slug = ?)"
@@ -325,6 +347,7 @@ function bookQuery(catalogId, extras) {
 
   const limit = Math.min(PAGE_SIZE, Math.max(1, safeNumber(extras.limit, PAGE_SIZE)));
   const skip = Math.min(1_000_000, safeNumber(extras.skip, 0));
+  const offset = (genrePage - 1) * PAGE_SIZE + skip;
   const sql = [
     "SELECT id, title, author, language, genres_json, poster, year, chapter_count",
     "FROM books",
@@ -340,7 +363,7 @@ async function getCatalog(db, route, extras) {
   if (route.type !== "movie") return json({ metas: [] });
 
   const lang = LANGUAGES.some((language) => "librivox_lang_" + language.slug === route.id);
-  const genre = /^librivox_genre_[a-z0-9-]+$/.test(route.id);
+  const genre = /^librivox_genre_[a-z0-9-]+(?:_p\\d+)?$/.test(route.id);
   const audioType = /^librivox_type_[a-z0-9_]+$/.test(route.id) &&
     Object.prototype.hasOwnProperty.call(TYPE_FILTERS, route.id.slice("librivox_type_".length));
   const alpha = /^librivox_alpha_(?:0_9|other|[a-z]_[a-z])$/.test(route.id);
