@@ -169,7 +169,6 @@ for (const file of walkM3u(genreRoot)) {
   const fallback = path.basename(file, ".m3u").replace(/-/g, " ");
   for (const row of rows) {
     const genre = row.groupTitle || fallback;
-    if (isHiddenGenre(genre)) continue;
     if (!genresByUrl.has(row.url)) genresByUrl.set(row.url, new Set());
     genresByUrl.get(row.url).add(genre);
   }
@@ -486,7 +485,8 @@ if (process.env.LIBRIVOX_ENRICH_COVERS === "1") {
 }
 
 const normalizedBooks = [...books.values()].map((book) => {
-  const genres = book.genres.size ? [...book.genres].sort((a, b) => a.localeCompare(b)) : ["Unclassified"];
+  const retainedGenres = [...book.genres].filter((genre) => !isHiddenGenre(genre));
+  const genres = retainedGenres.length ? retainedGenres.sort((a, b) => a.localeCompare(b)) : ["Unclassified"];
   book.chapters.sort((a, b) =>
     a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" }) ||
     a.url.localeCompare(b.url)

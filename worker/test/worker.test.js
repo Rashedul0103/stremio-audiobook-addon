@@ -249,7 +249,7 @@ test("meta previews include language, author, and genre metadata", () => {
   assert.deepEqual(preview.genres, ["Poetry", "Classics"]);
   assert.match(preview.description, /Language: Bangla/);
   assert.match(preview.description, /Author: A\. Writer/);
-  assert.match(preview.description, /Audio tracks\\/chapters: 3/);
+  assert.ok(preview.description.includes("Audio tracks/chapters: 3"));
   assert.equal(preview.releaseInfo, "1920");
 });
 
