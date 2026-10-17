@@ -184,7 +184,7 @@ test("real SQLite metadata and playback return only HTTP(S) chapter URLs", async
   assert.equal(meta.name, "Banshi");
   assert.match(meta.description, /Language: Bangla/);
   assert.match(meta.description, /Genres: Poetry/);
-  assert.ok(meta.description.includes("Audio tracks/chapters: 1"));
+  assert.ok(meta.description.includes("Audio tracks/chapters: 3"));
   assert.deepEqual(meta.genres, ["Poetry"]);
 
   response = await worker.fetch(new Request("https://addon.test/stream/movie/lvb-bn-1.json"), env);
