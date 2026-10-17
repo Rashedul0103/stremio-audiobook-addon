@@ -7,6 +7,7 @@ This folder adds a native Cloudflare Worker endpoint for Nuvio/Stremio-compatibl
 - One addon manifest URL: `https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/manifest.json`
 - Separate catalogue rows for English, Bangla, Hindi, Urdu, Arabic and Turkish.
 - One row per imported genre, including large genres; the same shelf uses skip pagination rather than duplicate numbered shelves.
+- Lightweight manifest genre lookup from the genres table; manifest requests do not scan every book just to recount genre membership.
 - Audio-type shelves for plays/audio drama, dramatic readings, source-marked group readings, books with 2+ identified readers, books with one identified narrator, poetry, short stories, children’s titles, religion/scripture, nonfiction, fantasy/science fiction, and mystery/crime. Reader-based labels are only applied where the source playlist identifies reader metadata.
 - Balanced alphabetical rows across the imported titles, including a separate numeric-title row; there is no undifferentiated “All Books” or per-author row.
 - Expanded detail metadata: author, language, genres, identified readers, chapter count, runtime, source-text copyright year, LibriVox project ID, and official catalogue/source/RSS/ZIP links.
@@ -32,7 +33,8 @@ This design uses Workers and D1 only; it does not require a VPS or a traditional
    - `CLOUDFLARE_API_TOKEN` with the minimum Workers and D1 edit permissions required by Wrangler.
 5. Merge the Worker files into `main`. The deploy workflow applies the D1 schema and deploys the Worker.
 6. Open the GitHub Actions tab and manually run **Deploy LibriVox Audiobook Worker** after Worker code changes.
-7. Manually run **Import LibriVox catalogue into D1** after importer or cover-art changes. This downloads the public `Rashedul0103/librivox_audiobooks` source repository, converts the six-language generated M3Us into book records, enriches matching records with LibriVox cover art, and imports them into D1.
+7. Run **Deploy LibriVox Audiobook Worker** first whenever the D1 schema or Worker code changes. It applies pending migrations and deploys the Worker.
+8. Then manually run **Import LibriVox catalogue into D1** after importer or cover-art changes. This downloads the public `Rashedul0103/librivox_audiobooks` source repository, converts the six-language generated M3Us into book records, enriches matching records with LibriVox cover art, and imports them into D1. The import workflow assumes the schema has already been migrated by the deploy workflow.
 
 The all-zero UUID is a setup placeholder, not a live database ID. Deployment and import will fail until it is replaced and the two repository secrets are configured. No Cloudflare deployment has been performed by this code change.
 
