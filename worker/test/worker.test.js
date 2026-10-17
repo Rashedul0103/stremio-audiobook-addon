@@ -188,6 +188,57 @@ test("large genres are split into labeled pages with no missing books", async ()
   assert.equal(pageNames.length, 205);
 });
 
+test("alphabetical catalogue ranges plus skip pagination cover every title exactly once", async () => {
+  const books = [];
+  for (let code = 65; code <= 90; code++) {
+    const letter = String.fromCharCode(code);
+    for (let index = 0; index < 45; index++) {
+      const title = letter + " Book " + String(index).padStart(3, "0");
+      books.push({
+        id: "lvb-alpha-" + letter.toLowerCase() + "-" + index,
+        title,
+        author: "Test Author",
+        language: "English",
+        genres_json: '["Fiction"]',
+        description: "Alphabetical coverage fixture",
+        poster: null,
+        year: null,
+        chapter_count: 1,
+        chapters_json: JSON.stringify([{
+          title: "Track 1",
+          url: "https://archive.org/download/alpha/" + letter + "-" + index + ".mp3",
+          duration: 60,
+        }]),
+        search_text: title + " Test Author English Fiction",
+      });
+    }
+  }
+
+  const db = new FakeD1(books);
+  const manifest = await buildManifest(db);
+  const ranges = manifest.catalogs.filter((catalog) => catalog.id.startsWith("librivox_alpha_"));
+  assert.ok(ranges.length >= 2);
+
+  const seen = [];
+  for (const range of ranges) {
+    let skip = 0;
+    while (true) {
+      const response = await worker.fetch(new Request(
+        "https://addon.test/catalog/movie/" + range.id + "/skip=" + skip + ".json"
+      ), { DB: db });
+      assert.equal(response.status, 200);
+      const metas = (await response.json()).metas;
+      seen.push(...metas.map((meta) => meta.id));
+      if (metas.length < 100) break;
+      skip += 100;
+    }
+  }
+
+  assert.equal(seen.length, books.length);
+  assert.equal(new Set(seen).size, books.length);
+  assert.deepEqual(new Set(seen), new Set(books.map((book) => book.id)));
+});
+
 test("meta previews include language, author, and genre metadata", () => {
   const preview = toMetaPreview({
     id: "lvb-123", title: "Test Book", author: "A. Writer", language: "Bangla",
