@@ -7,7 +7,7 @@ This folder adds a native Cloudflare Worker endpoint for Nuvio/Stremio-compatibl
 - One addon manifest URL: `https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/manifest.json`
 - Separate catalogue rows for English, Bangla, Hindi, Urdu, Arabic and Turkish.
 - A clearly labelled row for each imported genre; large genres are split into numbered 100-book shelves.
-- Audio-type shelves for audio drama/plays, dramatic readings, group/full-cast readings, multiple identified readers, single identified readers, poetry, short stories, children’s titles, religion/scripture, nonfiction, fantasy/science fiction, and mystery/crime.
+- Audio-type shelves for plays/audio drama, dramatic readings, source-marked group readings, books with 2+ identified readers, books with one identified narrator, poetry, short stories, children’s titles, religion/scripture, nonfiction, fantasy/science fiction, and mystery/crime. Reader-based labels are only applied where the source playlist identifies reader metadata.
 - Balanced alphabetical rows across the imported titles, including a separate numeric-title row; there is no undifferentiated “All Books” or per-author row.
 - Book metadata with genre labels, playable chapter/audio URLs, and LibriVox cover artwork where it is available.
 - Cloudflare D1 storage with one row per book, avoiding one database row per audio chapter.
@@ -55,7 +55,7 @@ The catalogue routes return a service error until the D1 migration has been appl
 
 ## Catalogue import notes
 
-The importer reads the generated `filtered/by-language`, `filtered/by-genre`, and `filtered/by-title` playlists. It treats the six selected-language playlists as the source of truth. Every selected-language audio URL must be assigned to a book record; the import fails rather than silently dropping unassigned tracks. It preserves chapter names, durations, reader labels, genres, authors, and direct audio URLs. It also looks up LibriVox cover-art URLs where available; some recordings may not have artwork, so those still use the built-in placeholder. Chapter lists are stored as JSON on each book record.
+The importer reads the generated `filtered/by-language`, `filtered/by-genre`, and `filtered/by-title` playlists. It treats the six selected-language playlists as the source of truth. Every distinct audio URL in those six playlists must be assigned to a book record; the import fails rather than silently dropping unassigned tracks. It preserves chapter names, durations, reader labels, genres, authors, and direct audio URLs. The import workflow enriches book records using the official LibriVox API cover-art fields and reports how many records have artwork; some recordings have no available cover and use the built-in placeholder. Chapter lists are stored as JSON on each book record.
 
 The source M3U playlist is not modified. The original Node.js addon is not deleted or replaced. The Worker uses the existing LibriVox playlist repository as its input; it does not mirror or rehost the audio files.
 
