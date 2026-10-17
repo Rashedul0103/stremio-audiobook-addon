@@ -346,13 +346,11 @@ export async function buildManifest(db) {
   let initialRows = [];
   if (db) {
     try {
+      // The manifest only needs the genre names now that each genre has one shelf.
+      // Avoid scanning every book + json_each() on every manifest request: this was
+      // unnecessarily expensive in D1's daily row-read quota.
       const result = await db.prepare(
-        "SELECT g.slug, g.name, COUNT(DISTINCT genre_map.book_id) AS count " +
-        "FROM genres AS g " +
-        "LEFT JOIN (SELECT b.id AS book_id, genre_item.value AS genre_name " +
-        "FROM books AS b, json_each(b.genres_json) AS genre_item) AS genre_map " +
-        "ON lower(genre_map.genre_name) = lower(g.name) " +
-        "GROUP BY g.slug, g.name ORDER BY g.name COLLATE NOCASE"
+        "SELECT slug, name FROM genres ORDER BY name COLLATE NOCASE"
       ).all();
       const rows = result.results || [];
       if (rows.length) genres = rows.map((row) => ({
