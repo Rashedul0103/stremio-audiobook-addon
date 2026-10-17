@@ -177,7 +177,7 @@ console.log("Genre-mapped tracks:", genresByUrl.size);
 
 function normalizeMatchText(value) {
   return String(value || "").normalize("NFKD")
-    .replace(/[\\u0300-\\u036f]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .toLowerCase()
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
@@ -186,7 +186,13 @@ function normalizeMatchText(value) {
 
 function apiAuthorName(record) {
   const raw = record?.authors ?? record?.author ?? [];
-  const authors = Array.isArray(raw) ? raw : raw && typeof raw === "object" ? [raw] : [];
+  let authors;
+  if (Array.isArray(raw)) authors = raw;
+  else if (raw && typeof raw === "object" && Array.isArray(raw.author)) authors = raw.author;
+  else if (raw && typeof raw === "object" && Array.isArray(raw.authors)) authors = raw.authors;
+  else if (raw && typeof raw === "object") authors = [raw];
+  else authors = [];
+
   return authors.map((author) => {
     if (typeof author === "string") return author;
     return [
@@ -370,7 +376,10 @@ if (process.env.LIBRIVOX_ENRICH_COVERS === "1") {
   try {
     coverForBook = await buildCoverLookup();
   } catch (error) {
-    console.warn("Cover enrichment was unavailable; continuing without external cover art:", error.message);
+    if (process.env.LIBRIVOX_ENRICH_COVERS === "1") {
+      throw new Error("Cover enrichment was requested but failed; refusing to import a coverless refresh: " + error.message);
+    }
+    console.warn("Cover enrichment was not requested or unavailable; records will use the fallback poster:", error.message);
   }
 }
 
@@ -490,6 +499,10 @@ const summary = {
   books: normalizedBooks.length,
   chapters: normalizedBooks.reduce((sum, book) => sum + book.chapter_count, 0),
   genres: uniqueGenres.size,
+  coverArt: {
+    booksWithCover: normalizedBooks.filter((book) => Boolean(book.poster)).length,
+    booksWithoutCover: normalizedBooks.filter((book) => !book.poster).length,
+  },
   languages: Object.fromEntries(LANGUAGES.map(([, name]) => [
     name,
     normalizedBooks.filter((book) => book.language === name).length,
