@@ -169,6 +169,7 @@ for (const file of walkM3u(genreRoot)) {
   const fallback = path.basename(file, ".m3u").replace(/-/g, " ");
   for (const row of rows) {
     const genre = row.groupTitle || fallback;
+    if (isHiddenGenre(genre)) continue;
     if (!genresByUrl.has(row.url)) genresByUrl.set(row.url, new Set());
     genresByUrl.get(row.url).add(genre);
   }
@@ -181,6 +182,41 @@ function normalizeMatchText(value) {
     .toLowerCase()
     .replace(/&/g, " and ")
     .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+const HIDDEN_GENRE_KEYS = new Set([
+  "nonfictionbibles", "nonfictionbiblesamericanstandardversion",
+  "nonfictionbiblesdouayrheimsversion", "nonfictionbibleskingjamesversion",
+  "nonfictionbiblesweymouthnewtestament", "nonfictionbiblesworldenglishbible",
+  "nonfictionbiblesyoungsliteraltranslation", "nonfictionreligion",
+  "nonfictionreligionchristianitybiographies", "nonfictionreligionchristianitycommentary",
+  "nonfictionreligionchristianityother",
+]);
+
+function isHiddenGenre(value) {
+  return HIDDEN_GENRE_KEYS.has(normalizeMatchText(value).replace(/[^a-z0-9]/g, ""));
+}
+
+function archiveIdentifier(value) {
+  try {
+    const url = new URL(value);
+    const match = url.pathname.match(/\/download\/([^/]+)/i);
+    return match ? decodeURIComponent(match[1]).toLowerCase() : "";
+  } catch {
+    return "";
+  }
+}
+
+function stripHtml(value) {
+  return String(value || "")
+    .replace(/<\/(?:p|div|li|br|h[1-6])\s*>/gi, "\n")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
@@ -216,9 +252,36 @@ function extractApiBooks(payload) {
 
 async function buildCoverLookup() {
   const byTitleAndAuthor = new Map();
-  const coversByTitle = new Map();
+  const byArchiveIdentifier = new Map();
+  const recordsByTitle = new Map();
   const pageSize = 500;
   const maxPages = 60;
+
+  function numericId(record) {
+    const id = Number(record?.id);
+    return Number.isFinite(id) ? id : 0;
+  }
+
+  function recordMetadata(record) {
+    const cover = [record?.coverart_jpg, record?.coverart_thumbnail]
+      .find((value) => typeof value === "string" && value.startsWith("https://")) || null;
+    return {
+      id: record?.id ? String(record.id) : null,
+      title: String(record?.title || ""),
+      author: apiAuthorName(record),
+      copyrightYear: Number.parseInt(String(record?.copyright_year || ""), 10) || null,
+      description: stripHtml(record?.description),
+      totalDuration: String(record?.totaltime || "").trim(),
+      totalDurationSeconds: Number.parseInt(String(record?.totaltimesecs || ""), 10) || null,
+      urlLibrivox: /^https:\/\//i.test(record?.url_librivox || "") ? record.url_librivox : null,
+      urlRss: /^https:\/\//i.test(record?.url_rss || "") ? record.url_rss : null,
+      urlZipFile: /^https:\/\//i.test(record?.url_zip_file || "") ? record.url_zip_file : null,
+      urlProject: /^https:\/\//i.test(record?.url_project || "") ? record.url_project : null,
+      urlTextSource: /^https:\/\//i.test(record?.url_text_source || "") ? record.url_text_source : null,
+      cover,
+      archiveIdentifier: archiveIdentifier(record?.url_zip_file || ""),
+    };
+  }
 
   for (let page = 0; page < maxPages; page++) {
     const offset = page * pageSize;
@@ -227,42 +290,76 @@ async function buildCoverLookup() {
       limit: String(pageSize),
       offset: String(offset),
       coverart: "1",
-      fields: "{id,title,authors,coverart_jpg,coverart_thumbnail}",
+      fields: "{id,title,description,authors,copyright_year,num_sections,totaltime,totaltimesecs,url_librivox,url_rss,url_zip_file,url_project,url_text_source,coverart_jpg,coverart_thumbnail}",
     });
     const response = await fetch("https://librivox.org/api/feed/audiobooks/?" + params.toString(), {
       headers: { Accept: "application/json", "User-Agent": "LibriVox-Audiobook-Stremio-Addon/1.0" },
       signal: AbortSignal.timeout(25000),
     });
-    if (!response.ok) throw new Error("LibriVox cover API returned HTTP " + response.status);
+    if (!response.ok) throw new Error("LibriVox cover/metadata API returned HTTP " + response.status);
     const rows = extractApiBooks(await response.json());
     if (!rows.length) break;
 
     for (const record of rows) {
       const titleKey = normalizeMatchText(record?.title);
-      const cover = [record?.coverart_thumbnail, record?.coverart_jpg]
-        .find((value) => typeof value === "string" && (value.startsWith("https://") || value.startsWith("http://")));
-      if (!titleKey || !cover) continue;
-
-      const authorKey = normalizeMatchText(apiAuthorName(record));
+      if (!titleKey) continue;
+      const metadata = recordMetadata(record);
+      const archiveKey = metadata.archiveIdentifier;
+      if (archiveKey && metadata.id) {
+        const existing = byArchiveIdentifier.get(archiveKey);
+        if (!existing || numericId(record) > numericId(existing._record)) {
+          byArchiveIdentifier.set(archiveKey, { ...metadata, _record: record });
+        }
+      }
+      if (!recordsByTitle.has(titleKey)) recordsByTitle.set(titleKey, []);
+      recordsByTitle.get(titleKey).push({ ...metadata, _record: record });
+      const authorKey = normalizeMatchText(metadata.author);
       const pairKey = titleKey + "|" + authorKey;
-      if (authorKey && !byTitleAndAuthor.has(pairKey)) byTitleAndAuthor.set(pairKey, cover);
-      if (!coversByTitle.has(titleKey)) coversByTitle.set(titleKey, new Set());
-      coversByTitle.get(titleKey).add(cover);
+      if (authorKey) {
+        const existing = byTitleAndAuthor.get(pairKey);
+        if (!existing || numericId(record) > numericId(existing._record)) {
+          byTitleAndAuthor.set(pairKey, { ...metadata, _record: record });
+        }
+      }
     }
 
     if (rows.length < pageSize) break;
     if (page + 1 < maxPages) await new Promise((resolve) => setTimeout(resolve, 3000));
   }
 
-  const uniqueTitleCovers = new Map();
-  for (const [title, covers] of coversByTitle) {
-    if (covers.size === 1) uniqueTitleCovers.set(title, [...covers][0]);
+  const uniqueTitleMetadata = new Map();
+  for (const [title, records] of recordsByTitle) {
+    const ids = new Set(records.map((record) => record.id).filter(Boolean));
+    if (ids.size === 1) uniqueTitleMetadata.set(title, records[0]);
   }
-  console.log("LibriVox cover index:", byTitleAndAuthor.size, "title/author matches and", uniqueTitleCovers.size, "unambiguous title matches.");
-  return (title, author) => {
+  console.log("LibriVox metadata index:", byArchiveIdentifier.size, "archive matches,",
+    byTitleAndAuthor.size, "title/author matches and", uniqueTitleMetadata.size, "unambiguous title matches.");
+
+  return (title, author, archiveKey) => {
     const titleKey = normalizeMatchText(title);
     const authorKey = normalizeMatchText(author);
-    return byTitleAndAuthor.get(titleKey + "|" + authorKey) || uniqueTitleCovers.get(titleKey) || null;
+    const matched = (archiveKey && byArchiveIdentifier.get(archiveKey)) ||
+      byTitleAndAuthor.get(titleKey + "|" + authorKey) ||
+      uniqueTitleMetadata.get(titleKey) || null;
+    if (!matched) return {
+      poster: null, librivox_id: null, copyright_year: null, description: "",
+      total_duration: "", total_duration_seconds: null, url_librivox: null,
+      url_rss: null, url_zip_file: null, url_project: null, url_text_source: null,
+    };
+    const { _record, ...metadata } = matched;
+    return {
+      poster: metadata.cover || null,
+      librivox_id: metadata.id ? Number.parseInt(metadata.id, 10) || null : null,
+      copyright_year: metadata.copyrightYear,
+      description: metadata.description,
+      total_duration: metadata.totalDuration,
+      total_duration_seconds: metadata.totalDurationSeconds,
+      url_librivox: metadata.urlLibrivox,
+      url_rss: metadata.urlRss,
+      url_zip_file: metadata.urlZipFile,
+      url_project: metadata.urlProject,
+      url_text_source: metadata.urlTextSource,
+    };
   };
 }
 
@@ -292,7 +389,8 @@ for (const file of titleFiles) {
     const parsed = parseBookLabel(row.label);
     const title = parsed.title || "Unknown title";
     const author = parsed.author || "Unknown author";
-    const identity = [genreSlug(title), genreSlug(author), language].join("|");
+    const archiveKey = archiveIdentifier(row.url);
+    const identity = [genreSlug(title), genreSlug(author), language, archiveKey || "shared"].join("|");
     const id = "lvb-" + createHash("sha256").update(identity).digest("hex").slice(0, 20);
 
     if (!books.has(id)) {
@@ -304,6 +402,7 @@ for (const file of titleFiles) {
         genres: new Set(),
         chapters: [],
         chapterUrls: new Set(),
+        archiveKey,
       });
     }
 
@@ -341,7 +440,8 @@ for (const url of unindexedTracks) {
     }
   }
   const author = parsed.author || "Unknown author";
-  const identity = [genreSlug(title), genreSlug(author), row.language].join("|");
+  const archiveKey = archiveIdentifier(url);
+  const identity = [genreSlug(title), genreSlug(author), row.language, archiveKey || "shared"].join("|");
   const id = "lvb-" + createHash("sha256").update(identity).digest("hex").slice(0, 20);
 
   if (!books.has(id)) {
@@ -353,6 +453,7 @@ for (const url of unindexedTracks) {
       genres: new Set(),
       chapters: [],
       chapterUrls: new Set(),
+      archiveKey,
     });
   }
   const book = books.get(id);
@@ -371,15 +472,16 @@ if (stillUnclaimed.length) {
 }
 console.log("Completeness check passed:", claimedTrackUrls.size, "of", languageByUrl.size, "selected-language track URLs assigned.");
 
-let coverForBook = () => null;
+let metadataForBook = () => ({
+  poster: null, librivox_id: null, copyright_year: null, description: "",
+  total_duration: "", total_duration_seconds: null, url_librivox: null,
+  url_rss: null, url_zip_file: null, url_project: null, url_text_source: null,
+});
 if (process.env.LIBRIVOX_ENRICH_COVERS === "1") {
   try {
-    coverForBook = await buildCoverLookup();
+    metadataForBook = await buildCoverLookup();
   } catch (error) {
-    if (process.env.LIBRIVOX_ENRICH_COVERS === "1") {
-      throw new Error("Cover enrichment was requested but failed; refusing to import a coverless refresh: " + error.message);
-    }
-    console.warn("Cover enrichment was not requested or unavailable; records will use the fallback poster:", error.message);
+    throw new Error("Cover/metadata enrichment was requested but failed; refusing to import an unenriched refresh: " + error.message);
   }
 }
 
@@ -389,8 +491,11 @@ const normalizedBooks = [...books.values()].map((book) => {
     a.title.localeCompare(b.title, undefined, { numeric: true, sensitivity: "base" }) ||
     a.url.localeCompare(b.url)
   );
-  const description = "LibriVox public-domain audiobook. " + book.chapters.length + " audio track(s)/chapter(s).";
-  const searchText = [book.title, book.author, book.language, ...genres].join(" ");
+  const metadata = metadataForBook(book.title, book.author, book.archiveKey);
+  const readers = [...new Set(book.chapters.map((chapter) => chapter.reader).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+  const description = metadata.description || "LibriVox public-domain audiobook.";
+  const searchText = [book.title, book.author, book.language, ...genres, ...readers].join(" ");
   return {
     id: book.id,
     title: book.title,
@@ -398,8 +503,18 @@ const normalizedBooks = [...books.values()].map((book) => {
     language: book.language,
     genres_json: JSON.stringify(genres),
     description,
-    poster: coverForBook(book.title, book.author),
+    poster: metadata.poster,
     year: null,
+    copyright_year: metadata.copyright_year,
+    librivox_id: metadata.librivox_id,
+    total_duration_seconds: metadata.total_duration_seconds,
+    total_duration: metadata.total_duration,
+    url_librivox: metadata.url_librivox,
+    url_rss: metadata.url_rss,
+    url_zip_file: metadata.url_zip_file,
+    url_project: metadata.url_project,
+    url_text_source: metadata.url_text_source,
+    reader_names_json: JSON.stringify(readers),
     chapter_count: book.chapters.length,
     chapters_json: JSON.stringify(book.chapters),
     search_text: searchText,
@@ -429,16 +544,26 @@ fs.mkdirSync(outputDir, { recursive: true });
 
 function bookToSqlStatements(book) {
   const makeInsert = (chaptersJson) =>
-    "INSERT INTO books (id,title,author,language,genres_json,description,poster,year,chapter_count,chapters_json,search_text,import_generation) VALUES (" +
+    "INSERT INTO books (id,title,author,language,genres_json,description,poster,year,copyright_year,librivox_id,total_duration_seconds,total_duration,url_librivox,url_rss,url_zip_file,url_project,url_text_source,reader_names_json,chapter_count,chapters_json,search_text,import_generation) VALUES (" +
     [
       sqlText(book.id), sqlText(book.title), sqlText(book.author), sqlText(book.language),
       sqlText(book.genres_json), sqlText(book.description), sqlValue(book.poster),
-      book.year === null ? "NULL" : String(book.year), String(book.chapter_count),
-      sqlText(chaptersJson), sqlText(book.search_text), sqlText(importGeneration),
+      book.year === null ? "NULL" : String(book.year),
+      book.copyright_year === null ? "NULL" : String(book.copyright_year),
+      book.librivox_id === null ? "NULL" : String(book.librivox_id),
+      book.total_duration_seconds === null ? "NULL" : String(book.total_duration_seconds),
+      sqlValue(book.total_duration), sqlValue(book.url_librivox), sqlValue(book.url_rss),
+      sqlValue(book.url_zip_file), sqlValue(book.url_project), sqlValue(book.url_text_source),
+      sqlText(book.reader_names_json), String(book.chapter_count), sqlText(chaptersJson),
+      sqlText(book.search_text), sqlText(importGeneration),
     ].join(",") + ") ON CONFLICT(id) DO UPDATE SET " +
     "title=excluded.title,author=excluded.author,language=excluded.language," +
     "genres_json=excluded.genres_json,description=excluded.description,poster=excluded.poster," +
-    "year=excluded.year,chapter_count=excluded.chapter_count,chapters_json=excluded.chapters_json," +
+    "year=excluded.year,copyright_year=excluded.copyright_year,librivox_id=excluded.librivox_id," +
+    "total_duration_seconds=excluded.total_duration_seconds,total_duration=excluded.total_duration," +
+    "url_librivox=excluded.url_librivox,url_rss=excluded.url_rss,url_zip_file=excluded.url_zip_file," +
+    "url_project=excluded.url_project,url_text_source=excluded.url_text_source,reader_names_json=excluded.reader_names_json," +
+    "chapter_count=excluded.chapter_count,chapters_json=excluded.chapters_json," +
     "search_text=excluded.search_text,import_generation=excluded.import_generation;";
 
   const directInsert = makeInsert(book.chapters_json);

@@ -16,6 +16,63 @@ const FALLBACK_GENRES = [
 const PAGE_SIZE = 100;
 const FALLBACK_POSTER = "https://upload.wikimedia.org/wikipedia/commons/thumb/9/90/Audiobook_icon.svg/512px-Audiobook_icon.svg.png";
 
+const HIDDEN_GENRE_KEYS = new Set([
+  "nonfictionbibles", "nonfictionbiblesamericanstandardversion",
+  "nonfictionbiblesdouayrheimsversion", "nonfictionbibleskingjamesversion",
+  "nonfictionbiblesweymouthnewtestament", "nonfictionbiblesworldenglishbible",
+  "nonfictionbiblesyoungsliteraltranslation", "nonfictionreligion",
+  "nonfictionreligionchristianitybiographies", "nonfictionreligionchristianitycommentary",
+  "nonfictionreligionchristianityother",
+]);
+const GENRE_SECTIONS = {
+  1: "General fiction, fantasy and adventure",
+  2: "Children's fiction and nonfiction",
+  3: "Crime, suspense and drama",
+  4: "Poetry and short stories",
+  5: "Nonfiction: general subjects",
+  6: "History and philosophy",
+  7: "Religion and scripture",
+  8: "Other source categories",
+};
+const CURATED_SHELVES = [
+  { id: "plays_dramatic", name: "Plays and dramatic works", filter: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%plays%' OR lower(value) LIKE '%dramatic reading%' OR lower(value) LIKE '%audio drama%')" },
+  { id: "poetry_verse", name: "Poetry and verse", filter: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%poetry%' OR lower(value) LIKE '%poem%' OR lower(value) LIKE '%verse%')" },
+  { id: "short_works", name: "Short works and collections", filter: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%short stor%' OR lower(value) LIKE '%antholog%' OR lower(value) LIKE '%short work%' OR lower(value) LIKE '%literary collections%' OR lower(value) LIKE '%essays%')" },
+  { id: "children_literary", name: "Children's literary works", filter: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%children%' OR lower(value) LIKE '%young adult%')" },
+  { id: "general_literary", name: "General literary fiction", filter: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%fiction%' AND lower(value) NOT LIKE '%children%' AND lower(value) NOT LIKE '%religious fiction%')" },
+  { id: "historical_literary", name: "Historical literary works", filter: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%historical fiction%' OR lower(value) LIKE '%history%')" },
+  { id: "scientific_educational", name: "Scientific and educational works", filter: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%science%' OR lower(value) LIKE '%education%' OR lower(value) LIKE '%mathematics%' OR lower(value) LIKE '%language learning%')" },
+  { id: "reference_unclassified", name: "Reference and unclassified works", filter: "EXISTS (SELECT 1 FROM json_each(books.genres_json) WHERE lower(value) LIKE '%reference%' OR lower(value) LIKE '%other unclassified%')" },
+];
+
+function normalizedGenreKey(value) {
+  return String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+function isHiddenGenreName(value) {
+  return HIDDEN_GENRE_KEYS.has(normalizedGenreKey(value));
+}
+function genreSectionNumber(genre) {
+  const slug = String(genre?.slug || "").toLowerCase();
+  if (/^(asian-antiquity|action-adventure-fiction|classics-greek-latin|culture-heritage|epistolary|family-life|fantastic-fiction|fictional-biographies|general-fiction|historical-fiction|humorous-fiction|literary-fiction|nature-animal-fiction|nautical-marine-fiction|romance$|sagas$|satire$|sports-fiction|travel-fiction|war-military-fiction|westerns$)/.test(slug)) return 1;
+  if (/^(children|children-s-)/.test(slug)) return 2;
+  if (/^(crime-mystery-fiction|dramatic-readings|erotica$|plays|suspense-espionage)/.test(slug)) return 3;
+  if (/^(poetry|short-stories)/.test(slug)) return 4;
+  if (/^(non-fiction-history|non-fiction-philosophy|non-fiction-political-science|non-fiction-psychology)/.test(slug)) return 6;
+  if (/^(religious-fiction|non-fiction-religion-other-religions)/.test(slug)) return 7;
+  if (/^non-fiction/.test(slug)) return 5;
+  if (/^other-unclassified/.test(slug)) return 8;
+  return 8;
+}
+function displayGenreName(value) {
+  return String(value || "").replace(/\bNon[- ]Fiction\b/gi, "Nonfiction")
+    .replace(/\s+(?:-|–|—)\s+/g, " — ").replace(/\s*&\s*/g, " & ")
+    .replace(/\s+/g, " ").trim();
+}
+function genreCatalogLabel(genre) {
+  const number = genreSectionNumber(genre);
+  return number + ". " + GENRE_SECTIONS[number] + " · " + displayGenreName(genre.name);
+}
+
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, HEAD, OPTIONS",
@@ -74,25 +131,63 @@ function safeNumber(value, fallback = 0) {
   return Number.isFinite(number) && number >= 0 ? number : fallback;
 }
 
-export function toMetaPreview(book) {
-  const genres = readJsonArray(book.genres_json);
+function readerNames(book) {
+  return readJsonArray(book.reader_names_json)
+    .filter((name) => typeof name === "string" && name.trim())
+    .map((name) => name.trim());
+}
+function formatRuntime(seconds) {
+  const total = safeNumber(seconds, 0);
+  if (!total) return "";
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.round((total % 3600) / 60);
+  return hours ? hours + "h " + minutes + "m" : minutes + "m";
+}
+function posterUrl(book, origin = "") {
+  if (!book.poster) return FALLBACK_POSTER;
+  if (!origin) return book.poster;
+  return origin + "/cover/" + encodeURIComponent(book.id) + ".jpg?v=" + encodeURIComponent(book.poster);
+}
+function metadataDescription(book, genres) {
+  const readers = readerNames(book);
+  const runtime = book.total_duration || formatRuntime(book.total_duration_seconds);
+  const lines = [
+    String(book.description || "").trim() || "LibriVox public-domain audiobook.",
+    "",
+    "Language: " + (book.language || "Unknown"),
+    "Author: " + (book.author && book.author !== "Unknown author" ? book.author : "Unknown author"),
+    "Genres: " + (genres.length ? genres.join(", ") : "Unclassified"),
+    "Audio tracks/chapters: " + safeNumber(book.chapter_count, 0),
+    runtime ? "Total runtime: " + runtime : "",
+    book.copyright_year ? "Source text copyright year: " + book.copyright_year : "",
+    book.librivox_id ? "LibriVox project ID: " + book.librivox_id : "",
+    readers.length ? "Readers: " + readers.join(", ") : "",
+    book.url_librivox ? "LibriVox catalogue: " + book.url_librivox : "",
+    book.url_text_source ? "Source text: " + book.url_text_source : "",
+    book.url_rss ? "RSS feed: " + book.url_rss : "",
+    book.url_zip_file ? "ZIP download: " + book.url_zip_file : "",
+    book.url_project ? "Project forum: " + book.url_project : "",
+  ];
+  return lines.filter((line, index) => line || index === 0).join("\n");
+}
+export function toMetaPreview(book, origin = "") {
+  const genres = readJsonArray(book.genres_json).filter((genre) => !isHiddenGenreName(genre));
   const author = book.author && book.author !== "Unknown author" ? [book.author] : [];
-  const chapterCount = safeNumber(book.chapter_count, 0);
+  const readers = readerNames(book);
+  const poster = posterUrl(book, origin);
+  const runtime = book.total_duration || formatRuntime(book.total_duration_seconds) || undefined;
   return {
-    id: book.id,
-    type: "movie",
-    name: book.title,
-    poster: book.poster || FALLBACK_POSTER,
-    background: book.poster || FALLBACK_POSTER,
-    description: [
-      book.language ? "Language: " + book.language : "",
-      author.length ? "Author: " + author.join(", ") : "",
-      genres.length ? "Genres: " + genres.join(", ") : "Genres: Unclassified",
-      chapterCount ? "Audio tracks/chapters: " + chapterCount : "",
-    ].filter(Boolean).join("\n"),
-    genres,
-    director: author,
-    cast: [],
+    id: book.id, type: "movie", name: book.title, poster, background: poster,
+    description: metadataDescription(book, genres),
+    genres, director: author, cast: readers, runtime,
+    website: book.url_librivox || undefined,
+    links: [
+      book.url_librivox ? { name: "LibriVox catalogue", category: "other", url: book.url_librivox } : null,
+      book.url_text_source ? { name: "Source text", category: "other", url: book.url_text_source } : null,
+      book.url_rss ? { name: "RSS feed", category: "other", url: book.url_rss } : null,
+      book.url_zip_file ? { name: "Download ZIP", category: "other", url: book.url_zip_file } : null,
+      book.url_project ? { name: "Project forum", category: "other", url: book.url_project } : null,
+    ].filter(Boolean),
     releaseInfo: book.year ? String(book.year) : undefined,
   };
 }
@@ -210,23 +305,26 @@ function baseCatalogs(genres, initialRows) {
     });
   }
 
-  // Give every real imported genre its own named row. The title itself also
-  // retains all genre labels in its metadata, including multi-genre books.
-  for (const genre of genres) {
-    if (!genre?.name || !genre?.slug) continue;
-    // Split large genres into separate 100-book shelves so every page has a
-    // clear genre label and clients do not need to paginate one enormous row.
-    const bookCount = safeNumber(genre.count, 0);
-    const pageCount = Math.max(1, Math.ceil(bookCount / PAGE_SIZE));
-    for (let page = 1; page <= pageCount; page++) {
-      const paged = pageCount > 1;
-      catalogs.push({
-        type: "movie",
-        id: "librivox_genre_" + genre.slug + (paged ? "_p" + page : ""),
-        name: "Genre · " + genre.name + (paged ? " (" + page + "/" + pageCount + ")" : ""),
-        extra: [],
-      });
-    }
+  // One row per genre, no matter how large it is. Large rows use skip pagination.
+  const orderedGenres = (genres || [])
+    .filter((genre) => genre?.name && genre?.slug && !isHiddenGenreName(genre.name))
+    .sort((a, b) => genreSectionNumber(a) - genreSectionNumber(b) ||
+      displayGenreName(a.name).localeCompare(displayGenreName(b.name), undefined, { sensitivity: "base" }));
+  for (const genre of orderedGenres) {
+    catalogs.push({
+      type: "movie",
+      id: "librivox_genre_" + genre.slug,
+      name: genreCatalogLabel(genre),
+      extra: [skip],
+    });
+  }
+  for (const shelf of CURATED_SHELVES) {
+    catalogs.push({
+      type: "movie",
+      id: "librivox_collection_" + shelf.id,
+      name: "8. Other source categories · " + shelf.name,
+      extra: [skip],
+    });
   }
 
   catalogs.push(...buildAlphaCatalogs(initialRows));
@@ -324,6 +422,11 @@ function bookQuery(catalogId, extras) {
     const typeId = catalogId.slice("librivox_type_".length);
     if (TYPE_FILTERS[typeId]) where.push("(" + TYPE_FILTERS[typeId] + ")");
   }
+  if (catalogId.startsWith("librivox_collection_")) {
+    const collectionId = catalogId.slice("librivox_collection_".length);
+    const shelf = CURATED_SHELVES.find((item) => item.id === collectionId);
+    if (shelf) where.push("(" + shelf.filter + ")");
+  }
 
   if (catalogId.startsWith("librivox_alpha_")) {
     const range = catalogId.slice("librivox_alpha_".length);
@@ -352,10 +455,10 @@ function bookQuery(catalogId, extras) {
   const skip = Math.min(1_000_000, safeNumber(extras.skip, 0));
   const offset = (genrePage - 1) * PAGE_SIZE + skip;
   const sql = [
-    "SELECT id, title, author, language, genres_json, poster, year, chapter_count",
+    "SELECT id, title, author, language, genres_json, poster, year, chapter_count, description, copyright_year, librivox_id, total_duration_seconds, total_duration, url_librivox, url_rss, url_zip_file, url_project, url_text_source, reader_names_json",
     "FROM books",
     where.length ? "WHERE " + where.join(" AND ") : "",
-    "ORDER BY title COLLATE NOCASE, id",
+    "ORDER BY title COLLATE NOCASE, COALESCE(librivox_id, 0) DESC, COALESCE(copyright_year, 0) DESC, id",
     "LIMIT ? OFFSET ?",
   ].filter(Boolean).join(" ");
   bind.push(limit, offset);
@@ -369,9 +472,11 @@ async function getCatalog(db, route, extras) {
   const genre = /^librivox_genre_[a-z0-9-]+(?:_p\d+)?$/.test(route.id);
   const audioType = /^librivox_type_[a-z0-9_]+$/.test(route.id) &&
     Object.prototype.hasOwnProperty.call(TYPE_FILTERS, route.id.slice("librivox_type_".length));
+  const collection = /^librivox_collection_[a-z0-9_]+$/.test(route.id) &&
+    CURATED_SHELVES.some((shelf) => "librivox_collection_" + shelf.id === route.id);
   const alpha = /^librivox_alpha_(?:0_9|other|[a-z]_[a-z])$/.test(route.id);
   const search = route.id === "librivox_search";
-  if (!lang && !genre && !audioType && !alpha && !search) return json({ metas: [] });
+  if (!lang && !genre && !audioType && !collection && !alpha && !search) return json({ metas: [] });
 
   // Search is a filter-only row and must never return the whole library by accident.
   if (search && !extras.search) return json({ metas: [] });
@@ -379,39 +484,55 @@ async function getCatalog(db, route, extras) {
 
   const { sql, bind } = bookQuery(route.id, extras);
   const result = await db.prepare(sql).bind(...bind).all();
-  return json({ metas: (result.results || []).map(toMetaPreview) });
+  return json({ metas: (result.results || []).map((book) => toMetaPreview(book, route.origin || "")) });
 }
 
 async function getMeta(db, route) {
   if (route.type !== "movie") return json({ meta: null });
   if (!db) return json({ error: "Catalogue database is not configured yet." }, 503);
   const book = await db.prepare(
-    "SELECT id, title, author, language, genres_json, description, poster, year, chapter_count FROM books WHERE id = ? LIMIT 1"
+    "SELECT id, title, author, language, genres_json, description, poster, year, chapter_count, copyright_year, librivox_id, total_duration_seconds, total_duration, url_librivox, url_rss, url_zip_file, url_project, url_text_source, reader_names_json FROM books WHERE id = ? LIMIT 1"
   ).bind(route.id).first();
   if (!book) return json({ meta: null });
-  const genres = readJsonArray(book.genres_json);
-  const description = [
-    book.description || "",
-    "",
-    "Language: " + book.language,
-    "Author: " + (book.author || "Unknown author"),
-    "Genres: " + (genres.length ? genres.join(", ") : "Unclassified"),
-    "Audio tracks/chapters: " + safeNumber(book.chapter_count, 0),
-  ].filter((line, index, array) => line || (index > 0 && array[index - 1])).join("\n");
-  return json({
-    meta: {
-      id: book.id,
-      type: "movie",
-      name: book.title,
-      poster: book.poster || FALLBACK_POSTER,
-      background: book.poster || FALLBACK_POSTER,
-      description,
-      genres,
-      director: book.author && book.author !== "Unknown author" ? [book.author] : [],
-      cast: [],
-      releaseInfo: book.year ? String(book.year) : undefined,
-    },
-  });
+  const genres = readJsonArray(book.genres_json).filter((genre) => !isHiddenGenreName(genre));
+  const meta = toMetaPreview(book, route.origin || "");
+  meta.description = metadataDescription(book, genres);
+  return json({ meta });
+}
+
+async function getCover(db, bookId) {
+  if (!db) return Response.redirect(FALLBACK_POSTER, 302);
+  const book = await db.prepare("SELECT poster FROM books WHERE id = ? LIMIT 1").bind(bookId).first();
+  if (!book?.poster) return Response.redirect(FALLBACK_POSTER, 302);
+  let source;
+  try { source = new URL(book.poster); }
+  catch { return Response.redirect(FALLBACK_POSTER, 302); }
+
+  const host = source.hostname.toLowerCase();
+  const trustedHost = host === "librivox.org" || host.endsWith(".librivox.org") ||
+    host === "archive.org" || host.endsWith(".archive.org");
+  if (source.protocol !== "https:" || !trustedHost) return Response.redirect(FALLBACK_POSTER, 302);
+
+  try {
+    const upstream = await fetch(source.toString(), {
+      headers: { Accept: "image/avif,image/webp,image/jpeg,image/png,image/*;q=0.8" },
+      cf: { cacheTtl: 2592000, cacheEverything: true },
+    });
+    const contentType = upstream.headers.get("Content-Type") || "";
+    if (!upstream.ok || !contentType.toLowerCase().startsWith("image/")) {
+      return Response.redirect(FALLBACK_POSTER, 302);
+    }
+    return new Response(upstream.body, {
+      status: 200,
+      headers: {
+        ...CORS_HEADERS, "Content-Type": contentType,
+        "Cache-Control": "public, max-age=2592000, s-maxage=2592000, immutable",
+        "X-Content-Type-Options": "nosniff",
+      },
+    });
+  } catch {
+    return Response.redirect(FALLBACK_POSTER, 302);
+  }
 }
 
 async function getStreams(db, route) {
@@ -455,6 +576,8 @@ async function handleRequest(request, env) {
     if (url.pathname === "/manifest.json") {
       return json(await buildManifest(env.DB), 200, { "Cache-Control": "public, max-age=300" });
     }
+    const coverMatch = url.pathname.match(/^\/cover\/(lvb-[a-z0-9-]+)\.jpg$/i);
+    if (coverMatch) return await getCover(env.DB, coverMatch[1]);
     if (url.pathname === "/") {
       return new Response(
         '<!doctype html><meta charset="utf-8"><title>LibriVox Audiobooks Addon</title><h1>LibriVox Audiobooks</h1><p>Install the addon using <a href="/manifest.json">manifest.json</a>.</p><p><a href="/health">Health status</a></p>',
@@ -464,6 +587,7 @@ async function handleRequest(request, env) {
 
     const route = parseRoute(url.pathname);
     if (!route) return json({ error: "Not found" }, 404);
+    route.origin = url.origin;
     const extras = parseExtras(url, route.rawExtra);
     try {
       if (route.resource === "catalog") return await getCatalog(env.DB, route, extras);

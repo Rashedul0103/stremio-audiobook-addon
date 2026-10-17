@@ -168,7 +168,8 @@ test("real SQLite manifest includes genres populated by the migration/import sch
   const manifest = await response.json();
   const genreCatalog = manifest.catalogs.find((catalog) => catalog.id === "librivox_genre_poetry");
   assert.ok(genreCatalog);
-  assert.equal(genreCatalog.name, "Genre · Poetry");
+  assert.equal(genreCatalog.name, "4. Poetry and short stories · Poetry");
+  assert.equal(manifest.catalogs.some((catalog) => /bibles|nonfiction.*religion/i.test(catalog.name)), false);
   assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_all"), false);
   assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_author"), false);
 });
@@ -183,6 +184,7 @@ test("real SQLite metadata and playback return only HTTP(S) chapter URLs", async
   assert.equal(meta.name, "Banshi");
   assert.match(meta.description, /Language: Bangla/);
   assert.match(meta.description, /Genres: Poetry/);
+  assert.match(meta.description, /Audio tracks\\/chapters: 1/);
   assert.deepEqual(meta.genres, ["Poetry"]);
 
   response = await worker.fetch(new Request("https://addon.test/stream/movie/lvb-bn-1.json"), env);
@@ -190,6 +192,27 @@ test("real SQLite metadata and playback return only HTTP(S) chapter URLs", async
   const streams = (await response.json()).streams;
   assert.equal(streams.length, 1);
   assert.equal(streams[0].url, "https://archive.org/download/poetry/banshi.mp3");
+});
+
+test("same-title editions sort by newest LibriVox project ID before older editions", async (t) => {
+  const env = fixture();
+  t.after(() => env.close());
+  seedBook(env.DB, {
+    id: "lvb-frankenstein-old", title: "Frankenstein", author: "Mary Shelley",
+    language: "English", genres: ["Classics"],
+    chapters: [{ title: "Chapter 1", url: "https://archive.org/download/frankenstein_old/ch01.mp3", duration: 60 }],
+  });
+  seedBook(env.DB, {
+    id: "lvb-frankenstein-new", title: "Frankenstein", author: "Mary Shelley",
+    language: "English", genres: ["Classics"],
+    chapters: [{ title: "Chapter 1", url: "https://archive.org/download/frankenstein_new/ch01.mp3", duration: 60 }],
+  });
+  env.DB.sqlite.prepare("UPDATE books SET librivox_id = ? WHERE id = ?").run(8000, "lvb-frankenstein-new");
+  env.DB.sqlite.prepare("UPDATE books SET librivox_id = ? WHERE id = ?").run(2000, "lvb-frankenstein-old");
+  const response = await worker.fetch(new Request("https://addon.test/catalog/movie/librivox_genre_classics/skip=0.json"), env);
+  assert.equal(response.status, 200);
+  const metas = (await response.json()).metas.filter((meta) => meta.name === "Frankenstein");
+  assert.deepEqual(metas.map((meta) => meta.id), ["lvb-frankenstein-new", "lvb-frankenstein-old"]);
 });
 
 test("HEAD responses have no body and error/health responses are not cached", async (t) => {

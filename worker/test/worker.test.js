@@ -139,15 +139,16 @@ test("manifest advertises language, audio-type, per-genre and alphabetical catal
     assert.ok(manifest.catalogs.some((catalog) => catalog.id === "librivox_lang_" + language));
   }
   const genre = manifest.catalogs.find((catalog) => catalog.id === "librivox_genre_poetry");
-  assert.equal(genre.name, "Genre · Poetry");
+  assert.equal(genre.name, "4. Poetry and short stories · Poetry");
   assert.ok(manifest.catalogs.some((catalog) => catalog.id === "librivox_type_audio_drama"));
   assert.ok(manifest.catalogs.some((catalog) => catalog.id.startsWith("librivox_alpha_")));
   assert.ok(manifest.catalogs.some((catalog) => catalog.id === "librivox_search"));
   assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_all"), false);
   assert.equal(manifest.catalogs.some((catalog) => catalog.id === "librivox_author"), false);
+  assert.ok(manifest.catalogs.some((catalog) => catalog.id === "librivox_collection_poetry_verse"));
 });
 
-test("large genres are split into labeled pages with no missing books", async () => {
+test("large genres use one row and continue through skip pagination", async () => {
   const manyBooks = Array.from({ length: 205 }, (_, index) => ({
     id: "lvb-poetry-" + String(index).padStart(3, "0"),
     title: "Poetry Book " + String(index).padStart(3, "0"),
@@ -165,27 +166,26 @@ test("large genres are split into labeled pages with no missing books", async ()
     }]),
     search_text: "poetry book test author english",
   }));
-  const env = { DB: new FakeD1(manyBooks) };
-  const manifest = await buildManifest(env.DB);
-  const shelves = manifest.catalogs.filter((catalog) => catalog.id.startsWith("librivox_genre_poetry"));
-  assert.equal(shelves.length, 3);
-  assert.deepEqual(shelves.map((catalog) => catalog.name), [
-    "Genre · Poetry (1/3)",
-    "Genre · Poetry (2/3)",
-    "Genre · Poetry (3/3)",
-  ]);
+  const db = new FakeD1(manyBooks);
+  const manifest = await buildManifest(db);
+  const shelves = manifest.catalogs.filter((catalog) => catalog.id === "librivox_genre_poetry");
+  assert.equal(shelves.length, 1);
+  assert.equal(shelves[0].name, "4. Poetry and short stories · Poetry");
+  assert.equal(shelves[0].extra.some((extra) => extra.name === "skip"), true);
+  assert.equal(manifest.catalogs.some((catalog) => /librivox_genre_poetry_p\\d+/.test(catalog.id)), false);
 
-  const pageNames = [];
-  for (const page of [1, 2, 3]) {
-    const id = page === 1 ? "librivox_genre_poetry" : "librivox_genre_poetry_p" + page;
-    const response = await worker.fetch(new Request("https://addon.test/catalog/movie/" + id + ".json"), env);
+  const titles = [];
+  for (const skip of [0, 100, 200]) {
+    const response = await worker.fetch(new Request(
+      "https://addon.test/catalog/movie/librivox_genre_poetry/skip=" + skip + ".json"
+    ), { DB: db });
     assert.equal(response.status, 200);
     const metas = (await response.json()).metas;
-    pageNames.push(...metas.map((book) => book.name));
-    assert.equal(metas.length, page < 3 ? 100 : 5);
+    titles.push(...metas.map((book) => book.name));
+    assert.equal(metas.length, skip < 200 ? 100 : 5);
   }
-  assert.equal(new Set(pageNames).size, 205);
-  assert.equal(pageNames.length, 205);
+  assert.equal(new Set(titles).size, 205);
+  assert.equal(titles.length, 205);
 });
 
 test("alphabetical catalogue ranges plus skip pagination cover every title exactly once", async () => {
@@ -249,6 +249,7 @@ test("meta previews include language, author, and genre metadata", () => {
   assert.deepEqual(preview.genres, ["Poetry", "Classics"]);
   assert.match(preview.description, /Language: Bangla/);
   assert.match(preview.description, /Author: A\. Writer/);
+  assert.match(preview.description, /Audio tracks\\/chapters: 3/);
   assert.equal(preview.releaseInfo, "1920");
 });
 

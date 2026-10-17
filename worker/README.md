@@ -6,10 +6,12 @@ This folder adds a native Cloudflare Worker endpoint for Nuvio/Stremio-compatibl
 
 - One addon manifest URL: `https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev/manifest.json`
 - Separate catalogue rows for English, Bangla, Hindi, Urdu, Arabic and Turkish.
-- A clearly labelled row for each imported genre; large genres are split into numbered 100-book shelves.
+- One row per imported genre, including large genres; the same shelf uses skip pagination rather than duplicate numbered shelves.
 - Audio-type shelves for plays/audio drama, dramatic readings, source-marked group readings, books with 2+ identified readers, books with one identified narrator, poetry, short stories, children’s titles, religion/scripture, nonfiction, fantasy/science fiction, and mystery/crime. Reader-based labels are only applied where the source playlist identifies reader metadata.
 - Balanced alphabetical rows across the imported titles, including a separate numeric-title row; there is no undifferentiated “All Books” or per-author row.
-- Book metadata with genre labels, playable chapter/audio URLs, and LibriVox cover artwork where it is available.
+- Expanded detail metadata: author, language, genres, identified readers, chapter count, runtime, source-text copyright year, LibriVox project ID, and official catalogue/source/RSS/ZIP links.
+- Higher-resolution cover JPGs are preferred; the Worker serves covers through a cacheable image endpoint.
+- Same-title recordings remain separate when their Archive.org project identifiers differ; matching titles sort alphabetically and the higher/newer LibriVox project ID comes first.
 - Cloudflare D1 storage with one row per book, avoiding one database row per audio chapter.
 - CORS headers for client apps.
 
