@@ -406,11 +406,9 @@ function bookQuery(catalogId, extras) {
     bind.push(lang.name);
   }
 
-  let genrePage = 1;
-  const genreMatch = catalogId.match(/^librivox_genre_([a-z0-9-]+)(?:_p(\d+))?$/);
+  const genreMatch = catalogId.match(/^librivox_genre_([a-z0-9-]+)$/);
   if (genreMatch) {
     const slug = genreMatch[1];
-    genrePage = Math.max(1, safeNumber(genreMatch[2], 1));
     where.push(
       "EXISTS (SELECT 1 FROM json_each(books.genres_json) AS genre_item " +
       "JOIN genres AS g ON lower(g.name) = lower(genre_item.value) WHERE g.slug = ?)"
@@ -453,7 +451,7 @@ function bookQuery(catalogId, extras) {
 
   const limit = Math.min(PAGE_SIZE, Math.max(1, safeNumber(extras.limit, PAGE_SIZE)));
   const skip = Math.min(1_000_000, safeNumber(extras.skip, 0));
-  const offset = (genrePage - 1) * PAGE_SIZE + skip;
+  const offset = skip;
   const sql = [
     "SELECT id, title, author, language, genres_json, poster, year, chapter_count, description, copyright_year, librivox_id, total_duration_seconds, total_duration, url_librivox, url_rss, url_zip_file, url_project, url_text_source, reader_names_json",
     "FROM books",
@@ -469,7 +467,7 @@ async function getCatalog(db, route, extras) {
   if (route.type !== "movie") return json({ metas: [] });
 
   const lang = LANGUAGES.some((language) => "librivox_lang_" + language.slug === route.id);
-  const genre = /^librivox_genre_[a-z0-9-]+(?:_p\d+)?$/.test(route.id);
+  const genre = /^librivox_genre_[a-z0-9-]+$/.test(route.id);
   const audioType = /^librivox_type_[a-z0-9_]+$/.test(route.id) &&
     Object.prototype.hasOwnProperty.call(TYPE_FILTERS, route.id.slice("librivox_type_".length));
   const collection = /^librivox_collection_[a-z0-9_]+$/.test(route.id) &&
