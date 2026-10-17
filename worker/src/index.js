@@ -100,9 +100,9 @@ export function toMetaPreview(book) {
 const AUDIO_TYPES = [
   { id: "audio_drama", name: "Plays & Audio Drama" },
   { id: "dramatic_readings", name: "Dramatic Readings" },
-  { id: "group_reading", name: "Group / Full-Cast Readings" },
-  { id: "multi_reader", name: "Multiple Identified Readers" },
-  { id: "single_reader", name: "Single Identified Reader" },
+  { id: "group_reading", name: "Group Readings (source-marked)" },
+  { id: "multi_reader", name: "Multiple Identified Readers (2+)" },
+  { id: "single_reader", name: "Single Identified Narrator" },
   { id: "short_stories", name: "Short Stories & Anthologies" },
   { id: "poetry", name: "Poetry & Verse" },
   { id: "children", name: "Children's Audiobooks" },
