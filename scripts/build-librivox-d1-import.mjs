@@ -188,8 +188,8 @@ function apiAuthorName(record) {
   const raw = record?.authors ?? record?.author ?? [];
   let authors;
   if (Array.isArray(raw)) authors = raw;
-  else if (raw && typeof raw === "object" && Array.isArray(raw.author)) authors = raw.author;
-  else if (raw && typeof raw === "object" && Array.isArray(raw.authors)) authors = raw.authors;
+  else if (raw && typeof raw === "object" && raw.author) authors = Array.isArray(raw.author) ? raw.author : [raw.author];
+  else if (raw && typeof raw === "object" && raw.authors) authors = Array.isArray(raw.authors) ? raw.authors : [raw.authors];
   else if (raw && typeof raw === "object") authors = [raw];
   else authors = [];
 
